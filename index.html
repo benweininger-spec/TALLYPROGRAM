@@ -1,388 +1,501 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SB Forge Inventory & Tally Tool</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SB Forge — Inventory + Tally</title>
 <style>
-  :root {
-    --brass: #b99a5a;
-    --gray-bg: #1e1e1e;
-    --light-bg: #fafafa;
-    --card-bg: #2b2b2b;
-    --text-light: #f2f2f2;
-    --muted: #aaa;
+  /* --------- THEME --------- */
+  :root{
+    --brass:#b99a5a;
+    --gray-900:#1e1e1e;   /* page bg (inventory) */
+    --gray-800:#2b2b2b;   /* card bg (inventory) */
+    --ink:#f2f2f2;
+    --muted:#a7a7a7;
+    --border:#3d3d3d;
+
+    --light-bg:#f7f7fb;   /* tally tab */
+    --panel:#ffffff;
+    --ink-dark:#0f172a;
+    --muted-dark:#475569;
+    --border-light:#e5e7eb;
+    --shadow:0 6px 22px rgba(15,23,42,.08);
+    --radius:14px;
   }
-  body {
-    margin: 0;
-    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    color: var(--text-light);
-    background: var(--gray-bg);
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--ink);background:var(--gray-900);}
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 16px;background:var(--gray-800);border-bottom:1px solid var(--border);
   }
-  header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: var(--card-bg);
-    padding: 10px 16px;
-    border-bottom: 1px solid #444;
+  header h1{margin:0;font-size:1.1rem;color:var(--brass)}
+  nav{display:flex;gap:8px}
+  nav button,#refreshBtn{
+    background:none;border:1px solid var(--brass);color:var(--brass);
+    padding:6px 12px;border-radius:6px;cursor:pointer;
   }
-  header h1 {
-    font-size: 1.1rem;
-    margin: 0;
-    color: var(--brass);
+  nav button.active{background:var(--brass);color:var(--gray-900)}
+
+  /* --------- INVENTORY TAB (dark) --------- */
+  #inventory{display:none;padding:16px}
+  #meta{color:var(--muted);margin-bottom:8px}
+  .card{
+    background:var(--gray-800);border:1px solid var(--border);border-radius:12px;padding:14px;margin:12px 0;
   }
-  nav {
-    display: flex;
-    gap: 8px;
+  .sku{font-weight:800;color:var(--brass);font-size:1.08rem}
+  .row{display:flex;justify-content:space-between;align-items:center;margin:6px 0;gap:12px;flex-wrap:wrap}
+  .qty{font-variant-numeric:tabular-nums}
+  .muted{color:var(--muted)}
+
+  /* square tally buttons w/ loading fill */
+  .tally-btn{
+    border:1px solid var(--brass);background:none;color:var(--brass);
+    width:48px;height:48px;border-radius:8px;cursor:pointer;position:relative;overflow:hidden;
+    font-weight:800;font-size:16px;
   }
-  nav button {
-    background: none;
-    border: 1px solid var(--brass);
-    color: var(--brass);
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
+  .tally-btn.loading::after{
+    content:"";position:absolute;left:0;top:0;bottom:0;width:0;background:var(--brass);opacity:.2;
+    animation:fill .8s linear forwards;
   }
-  nav button.active {
-    background: var(--brass);
-    color: var(--gray-bg);
+  @keyframes fill{to{width:100%}}
+
+  /* manual entry */
+  .manual{
+    display:flex;gap:8px;align-items:center;flex-wrap:wrap
   }
-  #refreshBtn {
-    border: 1px solid var(--brass);
-    color: var(--brass);
-    background: none;
-    padding: 6px 12px;
-    border-radius: 6px;
-    cursor: pointer;
+  .manual input[type="number"]{
+    width:110px;padding:8px;border-radius:8px;border:1px solid var(--border);
+    background:#1a1a1a;color:var(--ink);text-align:right;font-weight:700;
+  }
+  .save-btn{
+    border:1px solid var(--brass);color:var(--gray-900);background:var(--brass);
+    border-radius:8px;padding:8px 10px;cursor:pointer;font-weight:700;
   }
 
-  /* Inventory Tab */
-  #inventory {
-    padding: 16px;
-    display: none;
-  }
-  .card {
-    background: var(--card-bg);
-    border: 1px solid #3d3d3d;
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 14px;
-  }
-  .sku {
-    font-weight: bold;
-    font-size: 1.1rem;
-    color: var(--brass);
-  }
-  .row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin: 6px 0;
-  }
-  .qty {
-    font-variant-numeric: tabular-nums;
-  }
-  .bar-container {
-    background: #3d3d3d;
-    height: 8px;
-    border-radius: 4px;
-    overflow: hidden;
-  }
-  .bar-fill {
-    height: 100%;
-    background: var(--brass);
-    width: 0%;
-    transition: width 0.5s ease;
-  }
-  .tally-btn {
-    border: 1px solid var(--brass);
-    background: none;
-    color: var(--brass);
-    padding: 10px;
-    width: 46px;
-    height: 46px;
-    border-radius: 6px;
-    cursor: pointer;
-    position: relative;
-    overflow: hidden;
-  }
-  .tally-btn.loading::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: var(--brass);
-    opacity: 0.2;
-    width: 0%;
-    animation: fill 0.8s linear forwards;
-  }
-  @keyframes fill { to { width: 100%; } }
+  /* progress bars */
+  .bar-container{background:#3d3d3d;height:10px;border-radius:999px;overflow:hidden}
+  .bar-fill{height:100%;background:var(--brass);width:0%;transition:width .5s ease}
 
-  /* Tally Tab (light) */
-  #tally {
-    background: var(--light-bg);
-    color: #222;
-    padding: 16px;
-    display: none;
-    min-height: 100vh;
+  /* week dots */
+  .week-dots{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .dot{
+    width:10px;height:10px;border-radius:50%;
+    background:#444;border:1px solid #555;
   }
-  .tally-box {
-    background: #fff;
-    border: 1px solid #ccc;
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 16px;
+  .dot.future{background:#444}
+  .dot.past{background:var(--brass)}
+  .dot-label{color:var(--muted);font-size:.9rem}
+
+  /* --------- TABS --------- */
+  #tally{display:none;background:var(--light-bg);color:var(--ink-dark);min-height:100vh;padding:0}
+
+  /* --------- TALLY TOOL (from your v4, lightly scoped) --------- */
+  .wrap{max-width:1200px;margin:28px auto;padding:0 16px}
+  .t-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+  .t-header h2{margin:0;font-size:20px}
+  .btns{display:flex;gap:8px;flex-wrap:wrap}
+  .btns button{
+    background:var(--panel);color:var(--ink-dark);border:1px solid var(--border-light);
+    padding:8px 12px;border-radius:999px;cursor:pointer;box-shadow:var(--shadow);position:relative;overflow:hidden;
   }
-  .tally-controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 12px;
+  .table{width:100%;border-collapse:separate;border-spacing:0 10px}
+  .thead .th{font-weight:700;font-size:13px;color:var(--muted-dark);text-transform:uppercase;letter-spacing:.04em;padding:6px 10px}
+  .roww{background:var(--panel);border:1px solid var(--border-light);border-radius:var(--radius);box-shadow:var(--shadow)}
+  .roww .td{padding:10px;border-right:1px solid var(--border-light)}
+  .roww .td:last-child{border-right:none}
+  .name{font-weight:700;display:flex;align-items:center;gap:10px}
+  .code{min-width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;border:1px dashed #d1d5db;background:#f8fafc;color:#111827;font-weight:800}
+  .tallyx{display:flex;align-items:center;gap:8px;justify-content:center}
+  .tallyx .count{min-width:64px;text-align:center;font-weight:800;font-size:18px;padding:8px 12px;background:#fff;border:1px solid #d8dee5;border-radius:10px}
+  .status{margin-top:6px;text-align:center;font-size:12px;color:var(--muted-dark)}
+  .roww.hit{outline:2px solid #16a34a}
+  .roww.over{outline:2px solid #dc2626}
+  .press-progress{position:absolute;left:0;bottom:0;height:3px;width:0;background:linear-gradient(90deg,#60a5fa,#34d399);transition:width 10s linear;pointer-events:none}
+  .orders-panel{margin-top:20px;background:var(--panel);border:1px solid var(--border-light);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
+  .orders-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;align-items:center}
+  .orders-grid .span-3{grid-column:span 3}
+  .orders-grid .span-6{grid-column:span 6}
+  .orders-grid .span-12{grid-column:1/-1}
+  .orders-grid label{font-size:12px;color:var(--muted-dark);text-transform:uppercase;letter-spacing:.04em}
+  .orders-grid input[type="text"], .orders-grid input[type="number"]{
+    width:100%;background:#fff;color:#0f172a;border:1px solid #d8dee5;border-radius:10px;padding:10px 12px;font-weight:600
   }
-  .tally-controls input[type="number"] {
-    width: 90px;
-    padding: 6px;
-  }
-  .tally-output {
-    font-family: monospace;
-    white-space: pre-wrap;
-  }
-  .checked {
-    text-decoration: line-through;
-    color: red;
-  }
+  .orders-columns{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  @media (max-width:900px){.orders-columns{grid-template-columns:1fr}}
+  .checkbox-list,.readout-list{width:100%;max-height:340px;overflow:auto;border:1px solid #d8dee5;border-radius:12px;padding:10px 12px;background:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .checkbox-line{display:flex;align-items:center;gap:8px;line-height:1.6;padding:2px 0}
+  .order-line{white-space:pre;line-height:1.6}
+  .order-line.unselected{text-decoration:line-through;text-decoration-thickness:2px;text-decoration-color:#dc2626;color:#dc2626}
+  .meta{color:var(--muted-dark);font-size:12px}
+  .counter{font-weight:700}
 </style>
 </head>
 <body>
-<header>
-  <h1>SB Forge</h1>
-  <nav>
-    <button id="tabInv" class="active">Inventory</button>
-    <button id="tabTally">Tally Tool</button>
-  </nav>
-  <button id="refreshBtn">Refresh</button>
-</header>
+  <header>
+    <h1>SB Forge</h1>
+    <nav>
+      <button id="tabInv" class="active">Inventory</button>
+      <button id="tabTally">Tally Tool</button>
+    </nav>
+    <button id="refreshBtn">Refresh</button>
+  </header>
 
-<section id="inventory">
-  <div id="meta" class="row" style="color:var(--muted); margin-bottom:8px;">Loading...</div>
-  <div id="invApp"></div>
-</section>
+  <!-- INVENTORY TAB -->
+  <section id="inventory">
+    <div id="meta">Loading…</div>
+    <div id="invApp"></div>
+  </section>
 
-<section id="tally">
-  <div class="tally-box">
-    <h2>Tally Tool</h2>
-    <div class="tally-controls">
-      <label>Start: <input type="number" id="startNum" value="100"></label>
-      <label>End: <input type="number" id="endNum" value="110"></label>
-      <button onclick="generateList()">Generate</button>
+  <!-- TALLY TOOL TAB (your v4, adapted) -->
+  <section id="tally">
+    <div class="wrap">
+      <div class="t-header">
+        <h2>SBF Tally — Orders by Range (v4)</h2>
+        <div class="btns">
+          <button id="resetTallies">Reset Tallies</button>
+          <button id="clearAll">Clear All</button>
+          <button onclick="window.print()">Print</button>
+        </div>
+      </div>
+
+      <table class="table" aria-live="polite">
+        <thead class="thead">
+          <tr>
+            <th class="th" style="width:260px;text-align:left">Product</th>
+            <th class="th" style="width:120px">Letter</th>
+            <th class="th" style="width:130px">Stock (from Sheet)</th>
+            <th class="th" style="width:220px">Tally</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+
+      <div class="orders-panel" id="ordersPanel">
+        <div class="orders-grid">
+          <div class="span-3">
+            <label for="startNum">Start #</label>
+            <input id="startNum" type="text" placeholder="#4560" />
+          </div>
+          <div class="span-3">
+            <label for="endNum">End #</label>
+            <input id="endNum" type="text" placeholder="#4576" />
+          </div>
+          <div class="span-6" style="display:flex; align-items:flex-end; gap:8px;">
+            <button id="genRange">Generate Checkboxes</button>
+            <button id="selectAll">Select All</button>
+            <button id="clearSelected">Clear Selected</button>
+          </div>
+
+          <div class="span-12 orders-columns">
+            <div>
+              <label>Order Checkboxes (descending)</label>
+              <div id="checkboxList" class="checkbox-list" aria-live="polite"></div>
+            </div>
+            <div>
+              <label>Readout (descending)</label>
+              <div id="readoutList" class="readout-list"></div>
+            </div>
+          </div>
+
+          <div class="span-12">
+            <span id="orderCount" class="counter">0</span>
+            <span class="meta" id="orderCountMeta">selected of 0 total</span>
+            <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button id="copySelected">Copy Selected</button>
+              <button id="copyAllLines">Copy All Lines</button>
+              <span class="meta">Unselected are struck in red.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="meta" style="margin-top:8px">Tip: +/– shows a 10s progress strip on the button. Stock fields read live values from your Google Sheet (not saved back by the tally tool).</p>
     </div>
-    <div id="checkboxes"></div>
-    <h3>Readout:</h3>
-    <div class="tally-output" id="readout"></div>
-  </div>
-</section>
+  </section>
 
 <script>
-const API = "/api/forward"; // uses Vercel proxy
+/* ======== CONFIG ======== */
+const API = "/api/forward"; // your Vercel proxy to Apps Script
 
-let invState = [];
-let localGoals = new Map();
+/* ======== TAB WIRING ======== */
+const tabInv = document.getElementById("tabInv");
+const tabTally = document.getElementById("tabTally");
+const secInv = document.getElementById("inventory");
+const secTally = document.getElementById("tally");
+const refreshBtn = document.getElementById("refreshBtn");
 
-document.getElementById("tabInv").onclick = () => switchTab("inventory");
-document.getElementById("tabTally").onclick = () => switchTab("tally");
-document.getElementById("refreshBtn").onclick = loadInventory;
+tabInv.onclick = ()=>switchTab("inventory");
+tabTally.onclick = ()=>switchTab("tally");
+refreshBtn.onclick = ()=>loadInventory();
 
 function switchTab(tab){
-  document.getElementById("tabInv").classList.toggle("active", tab==="inventory");
-  document.getElementById("tabTally").classList.toggle("active", tab==="tally");
-  document.getElementById("inventory").style.display = tab==="inventory" ? "block":"none";
-  document.getElementById("tally").style.display = tab==="tally" ? "block":"none";
-  document.body.style.background = tab==="inventory" ? "var(--gray-bg)" : "var(--light-bg)";
-  document.body.style.color = tab==="inventory" ? "var(--text-light)" : "#222";
+  const inv = tab==="inventory";
+  tabInv.classList.toggle("active", inv);
+  tabTally.classList.toggle("active", !inv);
+  secInv.style.display = inv ? "block" : "none";
+  secTally.style.display = inv ? "none" : "block";
+  document.body.style.background = inv ? "var(--gray-900)" : "var(--light-bg)";
+  document.body.style.color = inv ? "var(--ink)" : "var(--ink-dark)";
 }
 
+/* ======== FETCH HELPERS ======== */
 async function getJSON(url){ const r=await fetch(url); return r.json(); }
 async function postJSON(body){
   const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   return r.json();
 }
 
+/* ======== INVENTORY ======== */
+let invState = []; // cached inventory rows
+
+function weeksRemaining(goalDateStr){
+  if(!goalDateStr) return null;
+  const today = new Date();
+  const goal = new Date(goalDateStr);
+  if(isNaN(goal)) return null;
+  const msPerWeek = 1000*3600*24*7;
+  const weeks = Math.ceil((Date.UTC(goal.getFullYear(),goal.getMonth(),goal.getDate()) -
+                           Date.UTC(today.getFullYear(),today.getMonth(),today.getDate()))/ (msPerWeek));
+  return Math.max(0, weeks);
+}
+
+function weekDots(weeks){
+  // Render up to 30 dots; if more, show "+N"
+  const cap = 30;
+  const wrap = document.createElement("div");
+  wrap.className = "week-dots";
+  if(weeks===null){ wrap.innerHTML = '<span class="dot-label">No goal date</span>'; return wrap; }
+  const n = Math.min(cap, weeks);
+  for(let i=0;i<n;i++){
+    const d=document.createElement("span");
+    d.className="dot future";
+    wrap.appendChild(d);
+  }
+  if(weeks>cap){
+    const more=document.createElement("span");
+    more.className="dot-label";
+    more.textContent = `+${weeks-cap} wk`;
+    wrap.appendChild(more);
+  }else{
+    const lbl=document.createElement("span");
+    lbl.className="dot-label";
+    lbl.textContent = `${weeks} wk`;
+    wrap.appendChild(lbl);
+  }
+  return wrap;
+}
+
 async function loadInventory(){
-  document.getElementById("meta").textContent="Loading...";
+  const meta=document.getElementById("meta");
+  meta.textContent="Loading…";
   try{
-    const data=await getJSON(`${API}?route=inventory`);
-    invState=data.inventory||[];
+    const data = await getJSON(`${API}?route=inventory`);
+    invState = (data && data.inventory) ? data.inventory : [];
     renderInventory();
-    document.getElementById("meta").textContent=`Loaded ${invState.length} SKUs • ${new Date().toLocaleTimeString()}`;
+    // Pre-fill tally tool stock fields if tally tab already built
+    prefillTallyStocks();
+    meta.textContent = `Loaded ${invState.length} SKUs • ${new Date().toLocaleTimeString()}`;
   }catch(e){
-    document.getElementById("meta").textContent="Error loading inventory";
+    meta.textContent="Error loading inventory";
     console.error(e);
   }
 }
 
-function weeksRemaining(goalDateStr){
-  if(!goalDateStr) return null;
-  const today=new Date(); const goal=new Date(goalDateStr);
-  if(isNaN(goal)) return null;
-  const diff=(goal - today)/(1000*3600*24*7);
-  return Math.max(0, Math.ceil(diff));
+function animateBtn(b){ b.classList.add("loading"); setTimeout(()=>b.classList.remove("loading"),800); }
+
+async function adjustQty(sku, qty, btn){ animateBtn(btn); await postJSON({Action:"adjust",SKU:sku,Qty:qty}); await loadInventory(); }
+async function reserveQty(sku, qty, btn){ animateBtn(btn); await postJSON({Action:"reserve",SKU:sku,Qty:qty}); await loadInventory(); }
+async function shipQty(sku, qty, btn){ animateBtn(btn); await postJSON({Action:"ship",SKU:sku,Qty:qty}); await loadInventory(); }
+
+async function manualSave(sku, desired, current){
+  const d = Number(desired); const c = Number(current);
+  if(!Number.isFinite(d)) return;
+  const delta = Math.round(d - c); // can be negative
+  if(delta===0) return;
+  await postJSON({Action:"adjust",SKU:sku,Qty:delta});
+  await loadInventory();
 }
 
 function renderInventory(){
-  const container=document.getElementById("invApp");
-  container.innerHTML="";
-  invState.forEach(r=>{
-    const on=Number(r.On_Hand||0), res=Number(r.Reserved||0);
-    const avail=Math.max(0,on-res);
-    const goalStock=Number(r.Goal_Stock||0);
-    const weeks=weeksRemaining(r.Goal_Date);
-    const weekly=(goalStock && weeks)?Math.ceil(Math.max(0,goalStock-avail)/weeks):"–";
-    const pct=(goalStock)?Math.min(100,(avail/goalStock)*100):0;
+  const app = document.getElementById("invApp");
+  app.innerHTML = "";
+  // sort by SKU name
+  const rows = [...invState].sort((a,b)=>String(a.SKU).localeCompare(String(b.SKU)));
+  rows.forEach(r=>{
+    const on = Number(r.On_Hand||0);
+    const res = Number(r.Reserved||0);
+    const avail = Math.max(0, on - res);
+    const goal = Number(r.Goal_Stock||0);
+    const weeks = weeksRemaining(r.Goal_Date);
+    const weekly = (goal && weeks) ? Math.ceil(Math.max(0, goal - avail)/weeks) : "–";
+    const pct = goal ? Math.min(100, (avail/goal)*100) : 0;
 
-    const card=document.createElement("div");
-    card.className="card";
-    card.innerHTML=`
-      <div class="row"><span class="sku">${r.SKU}</span></div>
-      <div class="row"><span>On Hand</span><span class="qty">${on}</span></div>
-      <div class="row"><span>Reserved</span><span class="qty">${res}</span></div>
-      <div class="row"><span>Available</span><span class="qty">${avail}</span></div>
-      <div class="row"><span>Goal Stock</span><span class="qty">${goalStock||"–"}</span></div>
-      <div class="row"><span>Weeks Remaining</span><span class="qty">${weeks??"–"}</span></div>
-      <div class="row"><span style="color:var(--brass)">Weekly Build Needed</span><span class="qty" style="color:var(--brass);font-weight:bold;">${weekly}</span></div>
-      <div class="bar-container"><div class="bar-fill" style="width:${pct}%;"></div></div>
-      <div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap;">
-        <button class="tally-btn" onclick="adjustQty('${r.SKU}',1,this)">+</button>
-        <button class="tally-btn" onclick="adjustQty('${r.SKU}',-1,this)">−</button>
-        <button class="tally-btn" onclick="reserveQty('${r.SKU}',1,this)">Res</button>
-        <button class="tally-btn" onclick="shipQty('${r.SKU}',1,this)">Ship</button>
-      </div>`;
-    container.appendChild(card);
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="row"><div class="sku">${r.SKU}</div></div>
+
+      <div class="row">
+        <span>On Hand</span>
+        <span class="qty">${on}</span>
+      </div>
+      <div class="row">
+        <span>Reserved</span>
+        <span class="qty">${res}</span>
+      </div>
+      <div class="row">
+        <span>Available</span>
+        <span class="qty">${avail}</span>
+      </div>
+
+      <div class="row">
+        <span>Goal Stock</span>
+        <span class="qty">${goal || "–"}</span>
+      </div>
+
+      <div class="row">
+        <span>Weeks to Goal</span>
+        <span class="qty">${weeks ?? "–"}</span>
+      </div>
+
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="tally-btn" data-act="+">+</button>
+        <button class="tally-btn" data-act="-">−</button>
+        <button class="tally-btn" data-act="res">Res</button>
+        <button class="tally-btn" data-act="ship">Ship</button>
+
+        <div class="manual">
+          <label class="muted">Set On-Hand:</label>
+          <input type="number" inputmode="numeric" min="0" step="1" value="${on}" />
+          <button class="save-btn">Save</button>
+        </div>
+      </div>
+
+      <div class="row" style="align-items:flex-end;gap:12px">
+        <div style="flex:1">
+          <div class="bar-container"><div class="bar-fill" style="width:${pct}%;"></div></div>
+          <div class="muted" style="margin-top:6px">Stock progress (Available vs Goal)</div>
+        </div>
+        <div style="min-width:200px;text-align:right">
+          <div style="color:var(--brass);font-weight:800;font-size:1.1rem">${weekly}</div>
+          <div class="muted" style="margin-top:2px">Weekly build needed</div>
+        </div>
+      </div>
+    `;
+    // attach button handlers
+    const btnPlus = card.querySelector('[data-act="+"]');
+    const btnMinus = card.querySelector('[data-act="-"]');
+    const btnRes = card.querySelector('[data-act="res"]');
+    const btnShip = card.querySelector('[data-act="ship"]');
+    btnPlus.onclick = ()=>adjustQty(r.SKU, +1, btnPlus);
+    btnMinus.onclick = ()=>adjustQty(r.SKU, -1, btnMinus);
+    btnRes.onclick = ()=>reserveQty(r.SKU, +1, btnRes);
+    btnShip.onclick = ()=>shipQty(r.SKU, +1, btnShip);
+
+    // manual save handler
+    const input = card.querySelector('input[type="number"]');
+    const save = card.querySelector('.save-btn');
+    save.onclick = ()=>manualSave(r.SKU, input.value, on);
+
+    // week dots (timeline)
+    const dots = weekDots(weeks);
+    const row = document.createElement("div");
+    row.className="row";
+    row.appendChild(document.createTextNode("Timeline"));
+    row.appendChild(dots);
+    card.appendChild(row);
+
+    app.appendChild(card);
   });
 }
 
-async function adjustQty(sku,qty,btn){ animateBtn(btn); await postJSON({Action:"adjust",SKU:sku,Qty:qty}); loadInventory(); }
-async function reserveQty(sku,qty,btn){ animateBtn(btn); await postJSON({Action:"reserve",SKU:sku,Qty:qty}); loadInventory(); }
-async function shipQty(sku,qty,btn){ animateBtn(btn); await postJSON({Action:"ship",SKU:sku,Qty:qty}); loadInventory(); }
-function animateBtn(b){ b.classList.add("loading"); setTimeout(()=>b.classList.remove("loading"),800); }
-
-// ---------- TALLY TOOL ----------
-(function(){
+/* ======== TALLY TOOL (your v4, adapted + stock prefill) ======== */
+(function TallyTool(){
   const ITEMS = [
-    { key:'small', name:'Small', code:'S' },
-    { key:'large', name:'Large', code:'L' },
-    { key:'large_helper', name:'Large + Helper', code:'LH' },
-    { key:'xl', name:'XL', code:'XL' },
-    { key:'roaster', name:'Roaster', code:'R' },
-    { key:'spatula', name:'Spatula', code:'SP' },
-    { key:'tong', name:'Tong', code:'T' },
+    { key:'small', name:'Small', code:'S', sku:'Small' },
+    { key:'large', name:'Large', code:'L', sku:'Large' },
+    { key:'large_helper', name:'Large + Helper', code:'LH', sku:'Large + Helper' },
+    { key:'xl', name:'XL', code:'XL', sku:'XL' },
+    { key:'roaster', name:'Roaster', code:'R', sku:'Roaster' },
+    { key:'spatula', name:'Spatula', code:'SP', sku:'Spatula' },
+    { key:'tong', name:'Tong', code:'T', sku:'Tong' },
   ];
 
   const tbody = document.getElementById('tbody');
 
+  // Build table rows
   for(const item of ITEMS){
     const tr = document.createElement('tr');
-    tr.className = 'row';
+    tr.className = 'roww';
     tr.dataset.item = item.key;
 
     const tdName = document.createElement('td');
     tdName.className = 'td';
-    const nameWrap = document.createElement('div');
-    nameWrap.className = 'name';
-    const code = document.createElement('span');
-    code.className = 'code'; code.textContent = item.code;
-    const label = document.createElement('span');
-    label.textContent = item.name;
-    nameWrap.append(code, label);
-    tdName.appendChild(nameWrap);
+    const nameWrap = document.createElement('div'); nameWrap.className='name';
+    const code = document.createElement('span'); code.className='code'; code.textContent=item.code;
+    const label = document.createElement('span'); label.textContent=item.name;
+    nameWrap.append(code,label); tdName.appendChild(nameWrap);
 
-    const tdLetter = document.createElement('td');
-    tdLetter.className = 'td';
-    const codeSolo = document.createElement('div');
-    codeSolo.className = 'code'; codeSolo.textContent = item.code;
-    tdLetter.style.textAlign = 'center';
+    const tdLetter = document.createElement('td'); tdLetter.className='td'; tdLetter.style.textAlign='center';
+    const codeSolo=document.createElement('div'); codeSolo.className='code'; codeSolo.textContent=item.code;
     tdLetter.appendChild(codeSolo);
 
-    const tdStock = document.createElement('td');
-    tdStock.className = 'td';
-    tdStock.style.textAlign = 'center';
-    const stock = document.createElement('input');
-    stock.type = 'number'; stock.min = '0'; stock.step = '1';
-    stock.placeholder = '0'; stock.dataset.field = `${item.key}:stock`;
+    const tdStock=document.createElement('td'); tdStock.className='td'; tdStock.style.textAlign='center';
+    const stock=document.createElement('input'); stock.type='number'; stock.min='0'; stock.step='1'; stock.placeholder='0';
+    stock.dataset.field=`${item.key}:stock`;
+    stock.readOnly = true; // read-only; we fill from sheet
     tdStock.appendChild(stock);
 
-    const tdTally = document.createElement('td');
-    tdTally.className = 'td';
-    const talWrap = document.createElement('div');
-    talWrap.className = 'tally';
-    const minus = document.createElement('button'); minus.textContent = '–'; minus.title = `Decrement ${item.name}`;
-    const count = document.createElement('div'); count.className = 'count'; count.textContent = '0'; count.tabIndex=0; count.dataset.field = `${item.key}:tally`;
-    const plus = document.createElement('button'); plus.textContent = '+'; plus.title = `Increment ${item.name}`;
+    const tdTally=document.createElement('td'); tdTally.className='td';
+    const talWrap=document.createElement('div'); talWrap.className='tallyx';
+    const minus=document.createElement('button'); minus.textContent='–'; minus.title=`Decrement ${item.name}`;
+    const count=document.createElement('div'); count.className='count'; count.textContent='0'; count.tabIndex=0; count.dataset.field=`${item.key}:tally`;
+    const plus=document.createElement('button'); plus.textContent='+'; plus.title=`Increment ${item.name}`;
     talWrap.append(minus, count, plus);
-    const status = document.createElement('div'); status.className = 'status'; status.dataset.statusFor = item.key;
+    const status=document.createElement('div'); status.className='status'; status.dataset.statusFor=item.key;
     tdTally.append(talWrap, status);
 
     tr.append(tdName, tdLetter, tdStock, tdTally);
     tbody.appendChild(tr);
 
-    // Editable count on click
-    count.addEventListener('click', () => {
-      const cur = parseInt(count.textContent || '0', 10) || 0;
+    // editable tally on click
+    count.addEventListener('click',()=>{
+      const cur = parseInt(count.textContent||'0',10)||0;
       const next = prompt(`Set tally for ${item.name}:`, cur);
-      if(next === null) return;
+      if(next===null) return;
       const val = Math.max(0, parseInt(next,10)||0);
-      count.textContent = String(val);
+      count.textContent=String(val);
       saveField(`${item.key}:tally`, val);
       updateRow(item.key);
     });
 
     // +/- with 10s progress bar
-    plus.addEventListener('click', () => { step(item.key, +1); showProgress(plus); });
-    minus.addEventListener('click', () => { step(item.key, -1); showProgress(minus); });
+    plus.addEventListener('click',()=>{ step(item.key,+1); showProgress(plus); });
+    minus.addEventListener('click',()=>{ step(item.key,-1); showProgress(minus); });
   }
 
   function showProgress(btn){
-    // Remove any existing progress bar and create a new one
-    const old = btn.querySelector('.press-progress');
-    if(old) old.remove();
-    const bar = document.createElement('div');
-    bar.className = 'press-progress';
-    btn.appendChild(bar);
+    const old = btn.querySelector('.press-progress'); if(old) old.remove();
+    const bar = document.createElement('div'); bar.className='press-progress'; btn.appendChild(bar);
     // force reflow then animate
-    void bar.offsetWidth;
-    bar.style.width = '100%';
-    // clean up after 10s
-    setTimeout(() => { bar.remove(); }, 10050);
+    void bar.offsetWidth; bar.style.width='100%';
+    setTimeout(()=>bar.remove(),10050);
   }
 
-  function saveField(key, value){ localStorage.setItem(`tally:${key}`, String(value)); }
+  function saveField(key,val){ localStorage.setItem(`tally:${key}`, String(val)); }
   function loadField(key){ return localStorage.getItem(`tally:${key}`); }
 
+  // init saved tallies
   for(const item of ITEMS){
-    const stockInput = tbody.querySelector(`[data-field="${item.key}:stock"]`);
     const tallyEl = tbody.querySelector(`[data-field="${item.key}:tally"]`);
-    const s = loadField(`${item.key}:stock`);
     const t = loadField(`${item.key}:tally`);
-    if(s !== null) stockInput.value = s;
-    if(t !== null) tallyEl.textContent = t;
+    if(t!==null) tallyEl.textContent=t;
     updateRow(item.key);
   }
 
-  tbody.addEventListener('input', (e)=>{
-    const t = e.target;
-    if(!(t instanceof HTMLElement)) return;
-    const key = t.dataset?.field;
-    if(!key) return;
-    if(t.tagName === 'INPUT' && t.type === 'number'){
-      const v = Math.max(0, parseInt(t.value || '0', 10) || 0);
-      t.value = String(v);
-      saveField(key, v);
-      updateRow(key.split(':')[0]);
-    }
-  });
-
-  function step(itemKey, delta){
+  function step(itemKey,delta){
     const countEl = tbody.querySelector(`[data-field="${itemKey}:tally"]`);
-    let n = parseInt(countEl.textContent || '0', 10) || 0;
+    let n = parseInt(countEl.textContent||'0',10)||0;
     n = Math.max(0, n + delta);
     countEl.textContent = String(n);
     saveField(`${itemKey}:tally`, n);
@@ -390,56 +503,45 @@ function animateBtn(b){ b.classList.add("loading"); setTimeout(()=>b.classList.r
   }
 
   function updateRow(itemKey){
-    const tr = tbody.querySelector(`.row[data-item="${itemKey}"]`);
+    const tr = tbody.querySelector(`.roww[data-item="${itemKey}"]`);
     const stockVal = parseInt((tr.querySelector(`[data-field="${itemKey}:stock"]`)?.value)||'0',10)||0;
     const tallyVal = parseInt((tr.querySelector(`[data-field="${itemKey}:tally"]`)?.textContent)||'0',10)||0;
     const statusEl = tr.querySelector(`.status[data-status-for="${itemKey}"]`);
-    tr.classList.remove('hit','over');
-    statusEl.textContent = '';
+    tr.classList.remove('hit','over'); statusEl.textContent='';
 
-    if(stockVal === 0){
-      statusEl.textContent = 'Set stock to begin';
-      return;
-    }
+    if(stockVal===0){ statusEl.textContent='Set stock to begin'; return; }
     const remaining = stockVal - tallyVal;
-    if(remaining > 0){
-      statusEl.textContent = `Remaining: ${remaining}`;
-    } else if(remaining === 0){
-      statusEl.textContent = `OUT`;
-      tr.classList.add('hit');
-      flash(tr);
-    } else {
-      statusEl.textContent = `Over by ${Math.abs(remaining)}`;
-      tr.classList.add('over');
-    }
+    if(remaining>0){ statusEl.textContent=`Remaining: ${remaining}`; }
+    else if(remaining===0){ statusEl.textContent='OUT'; tr.classList.add('hit'); flash(tr); }
+    else { statusEl.textContent=`Over by ${Math.abs(remaining)}`; tr.classList.add('over'); }
   }
 
   function flash(el){
     el.animate(
       [{boxShadow:'0 0 0 0 rgba(22,163,74,0.0)'},{boxShadow:'0 0 0 14px rgba(22,163,74,0.18)'}],
-      {duration:320, direction:'alternate', iterations:2}
+      {duration:320,direction:'alternate',iterations:2}
     );
   }
 
-  document.getElementById('resetTallies').addEventListener('click', ()=>{
+  document.getElementById('resetTallies').addEventListener('click',()=>{
     if(!confirm('Reset ALL tallies to 0?')) return;
     for(const item of ITEMS){
       const el = tbody.querySelector(`[data-field="${item.key}:tally"]`);
-      el.textContent = '0'; saveField(`${item.key}:tally`, 0); updateRow(item.key);
+      el.textContent='0'; saveField(`${item.key}:tally`,0); updateRow(item.key);
     }
   });
-  document.getElementById('clearAll').addEventListener('click', ()=>{
+  document.getElementById('clearAll').addEventListener('click',()=>{
     if(!confirm('Clear EVERYTHING (stock & tallies)?')) return;
     for(const item of ITEMS){
-      tbody.querySelector(`[data-field="${item.key}:stock"]`).value = '';
-      tbody.querySelector(`[data-field="${item.key}:tally"]`).textContent = '0';
-      saveField(`${item.key}:stock`, '');
-      saveField(`${item.key}:tally`, 0);
-      updateRow(item.key);
+      tbody.querySelector(`[data-field="${item.key}:tally"]`).textContent='0';
+      saveField(`${item.key}:tally`,0);
+      // stock is read-only from sheet; we just clear the visual
+      const s = tbody.querySelector(`[data-field="${item.key}:stock"]`);
+      s.value='0'; updateRow(item.key);
     }
   });
 
-  // ===== Orders by Range (v4) =====
+  // ===== Orders by Range (same as your v4) =====
   const startNum = document.getElementById('startNum');
   const endNum = document.getElementById('endNum');
   const genRange = document.getElementById('genRange');
@@ -452,161 +554,115 @@ function animateBtn(b){ b.classList.add("loading"); setTimeout(()=>b.classList.r
   const orderCount = document.getElementById('orderCount');
   const orderCountMeta = document.getElementById('orderCountMeta');
 
-  // Load saved state
   const savedStart = localStorage.getItem('tally:orders:start');
   const savedEnd = localStorage.getItem('tally:orders:end');
-  const savedSelected = JSON.parse(localStorage.getItem('tally:orders:selected') || '[]');
-  if(savedStart) startNum.value = savedStart;
-  if(savedEnd) endNum.value = savedEnd;
-  if(savedStart && savedEnd){
-    renderRange(savedStart, savedEnd, new Set(savedSelected));
-  }
+  const savedSelected = JSON.parse(localStorage.getItem('tally:orders:selected')||'[]');
+  if(savedStart) startNum.value=savedStart;
+  if(savedEnd) endNum.value=savedEnd;
+  if(savedStart && savedEnd){ renderRange(savedStart, savedEnd, new Set(savedSelected)); }
 
   function normalizeNum(s){
-    if(!s) return null;
-    s = String(s).trim();
-    if(s.startsWith('#')) s = s.slice(1);
-    const n = parseInt(s, 10);
-    return Number.isFinite(n) ? n : null;
+    if(!s) return null; s=String(s).trim(); if(s.startsWith('#')) s=s.slice(1);
+    const n=parseInt(s,10); return Number.isFinite(n)?n:null;
   }
 
   genRange.addEventListener('click', ()=>{
-    const s = normalizeNum(startNum.value);
-    const e = normalizeNum(endNum.value);
-    if(s === null || e === null){ alert('Enter a valid numeric range, e.g. #4560 to #4576'); return; }
-    const smin = Math.min(s,e), smax = Math.max(s,e);
-    localStorage.setItem('tally:orders:start', '#' + smin);
-    localStorage.setItem('tally:orders:end', '#' + smax);
-    const prevSel = new Set(JSON.parse(localStorage.getItem('tally:orders:selected') || '[]'));
-    const nextSel = new Set([...prevSel].filter(n => n >= smin && n <= smax));
-    renderRange('#'+smin, '#'+smax, nextSel);
+    const s=normalizeNum(startNum.value), e=normalizeNum(endNum.value);
+    if(s===null||e===null){ alert('Enter a valid numeric range, e.g. #4560 to #4576'); return; }
+    const smin=Math.min(s,e), smax=Math.max(s,e);
+    localStorage.setItem('tally:orders:start','#'+smin);
+    localStorage.setItem('tally:orders:end','#'+smax);
+    const prevSel=new Set(JSON.parse(localStorage.getItem('tally:orders:selected')||'[]'));
+    const nextSel=new Set([...prevSel].filter(n=>n>=smin && n<=smax));
+    renderRange('#'+smin,'#'+smax,nextSel);
   });
 
-  function renderRange(startStr, endStr, selectedSet){
-    checkboxList.innerHTML = '';
-    readoutList.innerHTML = '';
-    const s = normalizeNum(startStr);
-    const e = normalizeNum(endStr);
-    const smin = Math.min(s,e), smax = Math.max(s,e);
-
-    // Left: checkbox lines, descending
-    for(let n = smax; n >= smin; n--){
-      const line = document.createElement('label');
-      line.className = 'checkbox-line';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.dataset.order = String(n);
-      cb.checked = selectedSet.has(n);
-      cb.addEventListener('change', onToggle);
-      line.appendChild(cb);
-      line.appendChild(document.createTextNode('#'+n));
+  function renderRange(startStr,endStr,selectedSet){
+    checkboxList.innerHTML=''; readoutList.innerHTML='';
+    const s=normalizeNum(startStr), e=normalizeNum(endStr);
+    const smin=Math.min(s,e), smax=Math.max(s,e);
+    for(let n=smax;n>=smin;n--){
+      const line=document.createElement('label'); line.className='checkbox-line';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.dataset.order=String(n);
+      cb.checked=selectedSet.has(n); cb.addEventListener('change',onToggle);
+      line.append(cb, document.createTextNode('#'+n));
       checkboxList.appendChild(line);
     }
-
-    // Right: readout lines, descending, strikethrough red for unselected
-    for(let n = smax; n >= smin; n--){
-      const div = document.createElement('div');
-      div.className = 'order-line' + (selectedSet.has(n) ? '' : ' unselected');
-      div.dataset.order = String(n);
-      div.textContent = '#'+n;
-      readoutList.appendChild(div);
+    for(let n=smax;n>=smin;n--){
+      const div=document.createElement('div'); div.className='order-line'+(selectedSet.has(n)?'':' unselected');
+      div.dataset.order=String(n); div.textContent='#'+n; readoutList.appendChild(div);
     }
-
-    saveSelected(selectedSet);
-    updateCounters(selectedSet, smin, smax);
+    saveSelected(selectedSet); updateCounters(selectedSet, smin, smax);
   }
 
   function onToggle(e){
-    const cb = e.target;
-    const n = parseInt(cb.dataset.order, 10);
-    const sel = new Set(JSON.parse(localStorage.getItem('tally:orders:selected') || '[]'));
+    const cb=e.target; const n=parseInt(cb.dataset.order,10);
+    const sel=new Set(JSON.parse(localStorage.getItem('tally:orders:selected')||'[]'));
     if(cb.checked) sel.add(n); else sel.delete(n);
     saveSelected(sel);
-    // mirror in readout
-    const line = readoutList.querySelector(`.order-line[data-order="${n}"]`);
-    if(line){
-      line.classList.toggle('unselected', !cb.checked);
-    }
-    const s = normalizeNum(localStorage.getItem('tally:orders:start'));
-    const e2 = normalizeNum(localStorage.getItem('tally:orders:end'));
-    if(s!==null && e2!==null){
-      updateCounters(sel, Math.min(s,e2), Math.max(s,e2));
-    }
+    const line=readoutList.querySelector(`.order-line[data-order="${n}"]`);
+    if(line) line.classList.toggle('unselected', !cb.checked);
+    const s=normalizeNum(localStorage.getItem('tally:orders:start'));
+    const e2=normalizeNum(localStorage.getItem('tally:orders:end'));
+    if(s!==null && e2!==null){ updateCounters(sel, Math.min(s,e2), Math.max(s,e2)); }
   }
 
   function saveSelected(set){
-    const arr = Array.from(set).sort((a,b)=>a-b);
+    const arr=Array.from(set).sort((a,b)=>a-b);
     localStorage.setItem('tally:orders:selected', JSON.stringify(arr));
   }
-
-  function updateCounters(set, smin, smax){
-    const total = smax - smin + 1;
-    const selected = set.size;
+  function updateCounters(set,smin,smax){
+    const total=smax-smin+1; const selected=set.size;
     orderCount.textContent = selected;
     orderCountMeta.textContent = `selected of ${total} total`;
   }
 
-  // Copy helpers
   copySelectedBtn.addEventListener('click', async ()=>{
-    const sel = new Set(JSON.parse(localStorage.getItem('tally:orders:selected') || '[]'));
-    const numbersDesc = Array.from(sel).sort((a,b)=>b-a).map(n => '#'+n).join('\n');
-    try{
-      await navigator.clipboard.writeText(numbersDesc);
-      copySelectedBtn.textContent = 'Copied!';
-      setTimeout(()=>copySelectedBtn.textContent='Copy Selected', 1200);
+    const sel=new Set(JSON.parse(localStorage.getItem('tally:orders:selected')||'[]'));
+    const numbersDesc=Array.from(sel).sort((a,b)=>b-a).map(n=>'#'+n).join('\n');
+    try{ await navigator.clipboard.writeText(numbersDesc);
+      copySelectedBtn.textContent='Copied!'; setTimeout(()=>copySelectedBtn.textContent='Copy Selected',1200);
     }catch{ alert('Could not copy. Select text and copy manually.'); }
   });
 
   copyAllLinesBtn.addEventListener('click', async ()=>{
-    const s = normalizeNum(localStorage.getItem('tally:orders:start'));
-    const e = normalizeNum(localStorage.getItem('tally:orders:end'));
-    if(s===null || e===null){ alert('Generate a range first.'); return; }
-    const smin = Math.min(s,e), smax = Math.max(s,e);
-    const sel = new Set(JSON.parse(localStorage.getItem('tally:orders:selected') || '[]'));
-    const lines = [];
-    for(let n = smax; n >= smin; n--){
+    const s=normalizeNum(localStorage.getItem('tally:orders:start'));
+    const e=normalizeNum(localStorage.getItem('tally:orders:end'));
+    if(s===null||e===null){ alert('Generate a range first.'); return; }
+    const smin=Math.min(s,e), smax=Math.max(s,e);
+    const sel=new Set(JSON.parse(localStorage.getItem('tally:orders:selected')||'[]'));
+    const lines=[];
+    for(let n=smax;n>=smin;n--){
       const picked = sel.has(n);
-      // markdown ~~ for unselected
-      lines.push((picked ? '' : '~~') + '#'+n + (picked ? '' : '~~'));
+      lines.push((picked?'':'~~') + '#'+n + (picked?'':'~~'));
     }
-    const text = lines.join('\n');
-    try{
-      await navigator.clipboard.writeText(text);
-      copyAllLinesBtn.textContent = 'Copied!';
-      setTimeout(()=>copyAllLinesBtn.textContent='Copy All Lines', 1200);
+    const text=lines.join('\n');
+    try{ await navigator.clipboard.writeText(text);
+      copyAllLinesBtn.textContent='Copied!'; setTimeout(()=>copyAllLinesBtn.textContent='Copy All Lines',1200);
     }catch{ alert('Could not copy. Select text and copy manually.'); }
   });
 
-  // Bulk controls
-  selectAllBtn.addEventListener('click', ()=>{
-    const inputs = checkboxList.querySelectorAll('input[type="checkbox"]');
-    const sel = new Set();
-    inputs.forEach(cb => { cb.checked = true; sel.add(parseInt(cb.dataset.order, 10)); });
-    saveSelected(sel);
-    // update list
-    readoutList.querySelectorAll('.order-line').forEach(div => div.classList.remove('unselected'));
-    const s = normalizeNum(localStorage.getItem('tally:orders:start'));
-    const e2 = normalizeNum(localStorage.getItem('tally:orders:end'));
-    if(s!==null && e2!==null){
-      updateCounters(sel, Math.min(s,e2), Math.max(s,e2));
-    }
-  });
-
-  clearSelectedBtn.addEventListener('click', ()=>{
-    const inputs = checkboxList.querySelectorAll('input[type="checkbox"]');
-    inputs.forEach(cb => cb.checked = false);
-    const sel = new Set();
-    saveSelected(sel);
-    // update list
-    readoutList.querySelectorAll('.order-line').forEach(div => div.classList.add('unselected'));
-    const s = normalizeNum(localStorage.getItem('tally:orders:start'));
-    const e2 = normalizeNum(localStorage.getItem('tally:orders:end'));
-    if(s!==null && e2!==null){
-      updateCounters(sel, Math.min(s,e2), Math.max(s,e2));
-    }
-  });
-
+  // expose for stock prefill
+  window.__tally_items__ = ITEMS;
+  window.__tally_updateRow__ = updateRow;
 })();
+
+/* ======== BRIDGE: prefill tally tool stock from Sheet (read-only) ======== */
+function prefillTallyStocks(){
+  if(!invState || !invState.length) return;
+  const map = new Map(invState.map(r=>[String(r.SKU), (Number(r.On_Hand||0)-Number(r.Reserved||0))])); // Available
+  const ITEMS = window.__tally_items__ || [];
+  ITEMS.forEach(it=>{
+    const v = map.get(it.sku) || 0;
+    const input = document.querySelector(`#tbody [data-field="${it.key}:stock"]`);
+    if(input){ input.value = String(v); }
+    if(window.__tally_updateRow__) window.__tally_updateRow__(it.key);
+  });
+}
+
+/* ======== BOOT ======== */
+switchTab("inventory");
+loadInventory();
 </script>
 </body>
 </html>
