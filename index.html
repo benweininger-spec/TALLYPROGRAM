@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SB Forge — Tally (Single Sheet)</title>
+<style>
+  :root { --gap: 12px; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 14px; }
+  header { display:flex; gap:8px; align-items:center; margin-bottom:10px; }
+  h2 { margin:0; font-size:1.15rem; }
+  button, input { font: inherit; }
+  button { padding:8px 12px; border-radius:10px; border:1px solid #bbb; background:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:not-allowed; }
+  .grid { display:grid; grid-template-columns:1fr; gap: var(--gap); }
+  @media (min-width: 860px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  .card { border:1px solid #e2e2e2; border-radius:12px; padding:12px; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:6px 0; flex-wrap:wrap; }
+  .sku { font-weight:700; font-size:1.06rem; }
+  .muted { color:#666; }
+  .danger { color:#b00020; font-weight:600; }
+  .qty { font-variant-numeric: tabular-nums; min-width:3ch; text-align:right; }
+  .field { display:flex; gap:6px; align-items:center; }
+  .field input[type="date"], .field input[type="number"] { padding:6px 8px; border:1px solid #bbb; border-radius:8px; width: 10rem; }
+  .field input[type="number"] { width: 7rem; }
+  .err { background:#fff3f3; color:#900; padding:10px; border:1px solid #f0c; border-radius:8px; white-space:pre-wrap; margin-top:10px; }
+  .btnwrap { position:relative; display:inline-block; }
+  .loading::after { content:""; position:absolute; inset:0; width:0%; background:rgba(0,0,0,0.08); animation:fill .7s linear forwards; border-radius:10px; }
+  @keyframes fill { to { width:100%; } }
+  .tools { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .qtyInput { width: 5rem; padding:6px 8px; border:1px solid #bbb; border-radius:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h2>SB Forge — Inventory Tally</h2>
+  <div style="flex:1;"></div>
+  <button id="refreshBtn">Refresh</button>
+</header>
+
+<div id="meta" class="muted">Loading…</div>
+<div id="app"></div>
+<div id="error"></div>
+
+<script>
+// ===== CONFIG =====
+const API = "https://script.google.com/macros/s/AKfycby0QbuUt1JStLpMyMEOqOX9ib3KbESE5SM0tBGEghFTIxkisY0_r_UujCuMQ9yZbyu3/exec"; // <-- paste your Apps Script /exec URL
+
+// ===== UTIL =====
+function showError(msg, detail="") {
+  document.getElementById('error').innerHTML =
+    `<div class="err"><strong>Error:</strong> ${msg}${detail ? `\n${detail}` : ""}</div>`;
+}
+function clearError(){ document.getElementById('error').innerHTML = ""; }
+async function getJSON(url) {
+  const res = await fetch(url, { credentials: 'omit' });
+  const ct = res.headers.get('content-type') || '';
+  const txt = await res.text();
+  if (!ct.includes('application/json')) {
+    throw new Error("Non-JSON response:\n" + txt.slice(0,200));
+  }
+  return JSON.parse(txt);
+}
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+    credentials: 'omit'
+  });
+  const ct = res.headers.get('content-type') || '';
+  const txt = await res.text();
+  if (!ct.includes('application/json')) {
+    throw new Error("Non-JSON response on POST:\n" + txt.slice(0,200));
+  }
+  return JSON.parse(txt);
+}
+function weeksRemaining(goalDateStr) {
+  if (!goalDateStr) return null;
+  const today = new Date(); const goal = new Date(goalDateStr);
+  if (isNaN(goal)) return null;
+  const ms = 24*3600*1000;
+  const days = Math.floor((Date.UTC(goal.getFullYear(),goal.getMonth(),goal.getDate()) -
+                           Date.UTC(today.getFullYear(),today.getMonth(),today.getDate()))/ms);
+  return Math.max(1, Math.ceil(days/7));
+}
+function btn(el){ el.classList.add('loading'); setTimeout(()=>el.classList.remove('loading'), 750); }
+
+// ===== STATE =====
+let state = { inventory: [], skus: [] };
+
+// ===== API CALLS =====
+async function loadInventory() {
+  try {
+    clearError();
+    document.getElementById('meta').textContent = 'Loading…';
+    const data = await getJSON(`${API}?route=inventory`);
+    if (!data.ok) throw new Error(data.error || 'API ok=false');
+    state.inventory = data.inventory || [];
+    state.skus = data.skus || [];
+    render();
+    document.getElementById('meta').textContent = `Loaded ${state.inventory.length} rows • ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    showError('Failed to load inventory', String(e));
+    document.getElementById('meta').textContent = 'Error loading.';
+  }
+}
+async function mutate(Action, SKU, Qty) {
+  const body = { Action, SKU, Qty, User: 'Benji' };
+  const data = await postJSON(API, body);
+  if (!data.ok && !data.inventory) throw new Error(data.error || 'API ok=false');
+  state.inventory = data.inventory;
+  state.skus = data.skus || [];
+  render();
+}
+// Optional: update goals (requires updateGoal_ route in your Apps Script)
+// If you kept the minimal script without updateGoal_, this will error—comment out if not needed.
+async function updateGoal(SKU, Goal_Date, Goal_Stock) {
+  const payload = { UpdateGoal: { SKU, Goal_Date, Goal_Stock } };
+  const data = await postJSON(API, payload);
+  if (!data.ok && !data.inventory) throw new Error(data.error || 'API ok=false');
+  state.inventory = data.inventory;
+  render();
+}
+
+// ===== RENDER =====
+function cardHTML(r) {
+  const avail = Math.max(0, Number(r.On_Hand||0) - Number(r.Reserved||0));
+  const below = r.Target_Par && Number(r.On_Hand||0) < Number(r.Target_Par||0);
+  const w = weeksRemaining(r.Goal_Date);
+  const weeklyBuild = (r.Goal_Stock && w) ? Math.ceil(Math.max(0, Number(r.Goal_Stock||0) - avail) / w) : '';
+
+  // Pre-fill inputs
+  const gDate = r.Goal_Date ? String(r.Goal_Date).slice(0,10) : '';
+  const gStock = r.Goal_Stock || '';
+
+  return `
+    <div class="card" data-sku="${r.SKU}">
+      <div class="row">
+        <span class="sku">${r.SKU}</span>
+        ${below ? '<span class="danger">Below par</span>' : ''}
+      </div>
+
+      <div class="row"><span>On Hand</span><span class="qty">${r.On_Hand}</span></div>
+      <div class="row"><span>Reserved</span><span class="qty">${r.Reserved}</span></div>
+      <div class="row"><span>Available</span><span class="qty">${avail}</span></div>
+
+      <div class="row tools">
+        <input class="qtyInput" type="number" step="1" min="1" value="1" aria-label="qty">
+        <span class="btnwrap"><button onclick="btn(this); onAdjust('${r.SKU}', +getQty(this))">+ On Hand</button></span>
+        <span class="btnwrap"><button onclick="btn(this); onAdjust('${r.SKU}', -getQty(this))">− On Hand</button></span>
+        <span class="btnwrap"><button onclick="btn(this); onReserve('${r.SKU}', getQty(this))">Reserve</button></span>
+        <span class="btnwrap"><button onclick="btn(this); onShip('${r.SKU}', getQty(this))">Ship</button></span>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label class="muted">Goal Date</label>
+          <input type="date" value="${gDate}" oninput="onLocalGoalDate('${r.SKU}', this.value)" />
+        </div>
+        <div class="field">
+          <label class="muted">Goal Stock</label>
+          <input type="number" min="0" value="${gStock}" oninput="onLocalGoalStock('${r.SKU}', this.value)" />
+        </div>
+        <div class="field">
+          <button onclick="onSaveGoal('${r.SKU}', this)">Save Goal</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="muted">Weekly Build</span>
+        <span class="qty">${weeklyBuild || '—'}</span>
+      </div>
+    </div>
+  `;
+}
+
+function render() {
+  clearError();
+  const app = document.getElementById('app');
+  if (!state.inventory.length) {
+    app.innerHTML = '<div class="muted">No rows found. Add SKUs in the sheet.</div>';
+    return;
+  }
+  const html = `<div class="grid">${state.inventory.sort((a,b)=>a.SKU.localeCompare(b.SKU)).map(cardHTML).join('')}</div>`;
+  app.innerHTML = html;
+}
+
+// helpers for qty + goal inputs
+function getQty(btnEl) {
+  const card = btnEl.closest('.card');
+  const input = card.querySelector('.qtyInput');
+  const n = Number(input.value || 1);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+}
+const localGoals = new Map(); // SKU -> {date, stock}
+function onLocalGoalDate(sku, v){
+  const g = localGoals.get(sku) || {};
+  g.date = v;
+  localGoals.set(sku, g);
+}
+function onLocalGoalStock(sku, v){
+  const g = localGoals.get(sku) || {};
+  g.stock = v;
+  localGoals.set(sku, g);
+}
+
+// wire action handlers
+window.onAdjust = async (sku, qty) => {
+  try { await mutate('adjust', sku, qty); } catch(e){ showError('Adjust failed', String(e)); }
+};
+window.onReserve = async (sku, qty) => {
+  try { await mutate('reserve', sku, qty); } catch(e){ showError('Reserve failed', String(e)); }
+};
+window.onShip = async (sku, qty) => {
+  try { await mutate('ship', sku, qty); } catch(e){ showError('Ship failed', String(e)); }
+};
+window.onSaveGoal = async (sku, btn) => {
+  try {
+    btn.classList.add('loading');
+    const g = localGoals.get(sku) || {};
+    // If your Apps Script includes updateGoal_ + doPost handling for UpdateGoal:
+    await updateGoal(sku, g.date || '', g.stock ?? '');
+    // If you didn't include that route, comment out the line above and edit the sheet manually.
+  } catch(e) {
+    showError('Save Goal failed (do you have UpdateGoal in the API?)', String(e));
+  } finally {
+    btn.classList.remove('loading');
+  }
+};
+
+// top controls
+document.getElementById('refreshBtn').addEventListener('click', loadInventory);
+
+// boot
+loadInventory();
+</script>
+</body>
+</html>
