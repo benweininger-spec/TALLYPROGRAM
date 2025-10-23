@@ -5,6 +5,31 @@ export default async function handler(req, res) {
     headers: { "Content-Type": "application/json" },
     body: req.method === "POST" ? JSON.stringify(req.body) : undefined,
   });
+  // === Forge API Config ===
+const API = "/api/forward";
+async function getJSON(url){ const r = await fetch(url); return r.json(); }
+async function postJSON(body){
+  const r = await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  return r.json();
+}
+
+// === Load live stock ===
+async function loadLiveStock(){
+  try{
+    const data = await getJSON(`${API}?route=inventory`);
+    const inv = data.inventory || [];
+    for(const item of ITEMS){
+      const row = tbody.querySelector(`.row[data-item="${item.key}"]`);
+      const stockInput = row?.querySelector(`[data-field="${item.key}:stock"]`);
+      const match = inv.find(x => x.SKU.toLowerCase().includes(item.name.toLowerCase()));
+      if(match && stockInput){
+        stockInput.value = match.On_Hand || 0;
+        saveField(`${item.key}:stock`, match.On_Hand);
+      }
+    }
+  }catch(e){ console.error("Load stock failed", e); }
+}
+
   const txt = await r.text();
 res.setHeader("Access-Control-Allow-Origin", "*");
 res.setHeader("Access-Control-Allow-Headers", "Content-Type");
