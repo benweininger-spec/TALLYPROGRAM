@@ -266,38 +266,347 @@ async function shipQty(sku,qty,btn){ animateBtn(btn); await postJSON({Action:"sh
 function animateBtn(b){ b.classList.add("loading"); setTimeout(()=>b.classList.remove("loading"),800); }
 
 // ---------- TALLY TOOL ----------
-function generateList(){
-  const s=Number(document.getElementById("startNum").value);
-  const e=Number(document.getElementById("endNum").value);
-  const box=document.getElementById("checkboxes");
-  const readout=document.getElementById("readout");
-  box.innerHTML=""; readout.innerHTML="";
-  if(isNaN(s)||isNaN(e)||e<s) return;
-  const nums=[]; for(let i=s;i<=e;i++) nums.push(i);
-  nums.reverse();
-  nums.forEach(n=>{
-    const id="num"+n;
-    const label=document.createElement("label");
-    label.innerHTML=`<input type="checkbox" id="${id}" onchange="updateReadout()"> ${n}`;
-    box.appendChild(label);
-    box.appendChild(document.createElement("br"));
-  });
-}
-function updateReadout(){
-  const box=document.getElementById("checkboxes");
-  const checked=[...box.querySelectorAll("input:checked")].map(x=>Number(x.id.replace("num","")));
-  const all=[...box.querySelectorAll("input")].map(x=>Number(x.id.replace("num","")));
-  const out=document.getElementById("readout");
-  let html="";
-  all.forEach(n=>{
-    const mark=checked.includes(n)?`<span class="checked">${n}</span>`:n;
-    html+=mark+"<br>";
-  });
-  out.innerHTML=html;
-}
+(function(){
+  const ITEMS = [
+    { key:'small', name:'Small', code:'S' },
+    { key:'large', name:'Large', code:'L' },
+    { key:'large_helper', name:'Large + Helper', code:'LH' },
+    { key:'xl', name:'XL', code:'XL' },
+    { key:'roaster', name:'Roaster', code:'R' },
+    { key:'spatula', name:'Spatula', code:'SP' },
+    { key:'tong', name:'Tong', code:'T' },
+  ];
 
-switchTab("inventory");
-loadInventory();
+  const tbody = document.getElementById('tbody');
+
+  for(const item of ITEMS){
+    const tr = document.createElement('tr');
+    tr.className = 'row';
+    tr.dataset.item = item.key;
+
+    const tdName = document.createElement('td');
+    tdName.className = 'td';
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'name';
+    const code = document.createElement('span');
+    code.className = 'code'; code.textContent = item.code;
+    const label = document.createElement('span');
+    label.textContent = item.name;
+    nameWrap.append(code, label);
+    tdName.appendChild(nameWrap);
+
+    const tdLetter = document.createElement('td');
+    tdLetter.className = 'td';
+    const codeSolo = document.createElement('div');
+    codeSolo.className = 'code'; codeSolo.textContent = item.code;
+    tdLetter.style.textAlign = 'center';
+    tdLetter.appendChild(codeSolo);
+
+    const tdStock = document.createElement('td');
+    tdStock.className = 'td';
+    tdStock.style.textAlign = 'center';
+    const stock = document.createElement('input');
+    stock.type = 'number'; stock.min = '0'; stock.step = '1';
+    stock.placeholder = '0'; stock.dataset.field = `${item.key}:stock`;
+    tdStock.appendChild(stock);
+
+    const tdTally = document.createElement('td');
+    tdTally.className = 'td';
+    const talWrap = document.createElement('div');
+    talWrap.className = 'tally';
+    const minus = document.createElement('button'); minus.textContent = '–'; minus.title = `Decrement ${item.name}`;
+    const count = document.createElement('div'); count.className = 'count'; count.textContent = '0'; count.tabIndex=0; count.dataset.field = `${item.key}:tally`;
+    const plus = document.createElement('button'); plus.textContent = '+'; plus.title = `Increment ${item.name}`;
+    talWrap.append(minus, count, plus);
+    const status = document.createElement('div'); status.className = 'status'; status.dataset.statusFor = item.key;
+    tdTally.append(talWrap, status);
+
+    tr.append(tdName, tdLetter, tdStock, tdTally);
+    tbody.appendChild(tr);
+
+    // Editable count on click
+    count.addEventListener('click', () => {
+      const cur = parseInt(count.textContent || '0', 10) || 0;
+      const next = prompt(`Set tally for ${item.name}:`, cur);
+      if(next === null) return;
+      const val = Math.max(0, parseInt(next,10)||0);
+      count.textContent = String(val);
+      saveField(`${item.key}:tally`, val);
+      updateRow(item.key);
+    });
+
+    // +/- with 10s progress bar
+    plus.addEventListener('click', () => { step(item.key, +1); showProgress(plus); });
+    minus.addEventListener('click', () => { step(item.key, -1); showProgress(minus); });
+  }
+
+  function showProgress(btn){
+    // Remove any existing progress bar and create a new one
+    const old = btn.querySelector('.press-progress');
+    if(old) old.remove();
+    const bar = document.createElement('div');
+    bar.className = 'press-progress';
+    btn.appendChild(bar);
+    // force reflow then animate
+    void bar.offsetWidth;
+    bar.style.width = '100%';
+    // clean up after 10s
+    setTimeout(() => { bar.remove(); }, 10050);
+  }
+
+  function saveField(key, value){ localStorage.setItem(`tally:${key}`, String(value)); }
+  function loadField(key){ return localStorage.getItem(`tally:${key}`); }
+
+  for(const item of ITEMS){
+    const stockInput = tbody.querySelector(`[data-field="${item.key}:stock"]`);
+    const tallyEl = tbody.querySelector(`[data-field="${item.key}:tally"]`);
+    const s = loadField(`${item.key}:stock`);
+    const t = loadField(`${item.key}:tally`);
+    if(s !== null) stockInput.value = s;
+    if(t !== null) tallyEl.textContent = t;
+    updateRow(item.key);
+  }
+
+  tbody.addEventListener('input', (e)=>{
+    const t = e.target;
+    if(!(t instanceof HTMLElement)) return;
+    const key = t.dataset?.field;
+    if(!key) return;
+    if(t.tagName === 'INPUT' && t.type === 'number'){
+      const v = Math.max(0, parseInt(t.value || '0', 10) || 0);
+      t.value = String(v);
+      saveField(key, v);
+      updateRow(key.split(':')[0]);
+    }
+  });
+
+  function step(itemKey, delta){
+    const countEl = tbody.querySelector(`[data-field="${itemKey}:tally"]`);
+    let n = parseInt(countEl.textContent || '0', 10) || 0;
+    n = Math.max(0, n + delta);
+    countEl.textContent = String(n);
+    saveField(`${itemKey}:tally`, n);
+    updateRow(itemKey);
+  }
+
+  function updateRow(itemKey){
+    const tr = tbody.querySelector(`.row[data-item="${itemKey}"]`);
+    const stockVal = parseInt((tr.querySelector(`[data-field="${itemKey}:stock"]`)?.value)||'0',10)||0;
+    const tallyVal = parseInt((tr.querySelector(`[data-field="${itemKey}:tally"]`)?.textContent)||'0',10)||0;
+    const statusEl = tr.querySelector(`.status[data-status-for="${itemKey}"]`);
+    tr.classList.remove('hit','over');
+    statusEl.textContent = '';
+
+    if(stockVal === 0){
+      statusEl.textContent = 'Set stock to begin';
+      return;
+    }
+    const remaining = stockVal - tallyVal;
+    if(remaining > 0){
+      statusEl.textContent = `Remaining: ${remaining}`;
+    } else if(remaining === 0){
+      statusEl.textContent = `OUT`;
+      tr.classList.add('hit');
+      flash(tr);
+    } else {
+      statusEl.textContent = `Over by ${Math.abs(remaining)}`;
+      tr.classList.add('over');
+    }
+  }
+
+  function flash(el){
+    el.animate(
+      [{boxShadow:'0 0 0 0 rgba(22,163,74,0.0)'},{boxShadow:'0 0 0 14px rgba(22,163,74,0.18)'}],
+      {duration:320, direction:'alternate', iterations:2}
+    );
+  }
+
+  document.getElementById('resetTallies').addEventListener('click', ()=>{
+    if(!confirm('Reset ALL tallies to 0?')) return;
+    for(const item of ITEMS){
+      const el = tbody.querySelector(`[data-field="${item.key}:tally"]`);
+      el.textContent = '0'; saveField(`${item.key}:tally`, 0); updateRow(item.key);
+    }
+  });
+  document.getElementById('clearAll').addEventListener('click', ()=>{
+    if(!confirm('Clear EVERYTHING (stock & tallies)?')) return;
+    for(const item of ITEMS){
+      tbody.querySelector(`[data-field="${item.key}:stock"]`).value = '';
+      tbody.querySelector(`[data-field="${item.key}:tally"]`).textContent = '0';
+      saveField(`${item.key}:stock`, '');
+      saveField(`${item.key}:tally`, 0);
+      updateRow(item.key);
+    }
+  });
+
+  // ===== Orders by Range (v4) =====
+  const startNum = document.getElementById('startNum');
+  const endNum = document.getElementById('endNum');
+  const genRange = document.getElementById('genRange');
+  const checkboxList = document.getElementById('checkboxList');
+  const readoutList = document.getElementById('readoutList');
+  const copySelectedBtn = document.getElementById('copySelected');
+  const copyAllLinesBtn = document.getElementById('copyAllLines');
+  const selectAllBtn = document.getElementById('selectAll');
+  const clearSelectedBtn = document.getElementById('clearSelected');
+  const orderCount = document.getElementById('orderCount');
+  const orderCountMeta = document.getElementById('orderCountMeta');
+
+  // Load saved state
+  const savedStart = localStorage.getItem('tally:orders:start');
+  const savedEnd = localStorage.getItem('tally:orders:end');
+  const savedSelected = JSON.parse(localStorage.getItem('tally:orders:selected') || '[]');
+  if(savedStart) startNum.value = savedStart;
+  if(savedEnd) endNum.value = savedEnd;
+  if(savedStart && savedEnd){
+    renderRange(savedStart, savedEnd, new Set(savedSelected));
+  }
+
+  function normalizeNum(s){
+    if(!s) return null;
+    s = String(s).trim();
+    if(s.startsWith('#')) s = s.slice(1);
+    const n = parseInt(s, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  genRange.addEventListener('click', ()=>{
+    const s = normalizeNum(startNum.value);
+    const e = normalizeNum(endNum.value);
+    if(s === null || e === null){ alert('Enter a valid numeric range, e.g. #4560 to #4576'); return; }
+    const smin = Math.min(s,e), smax = Math.max(s,e);
+    localStorage.setItem('tally:orders:start', '#' + smin);
+    localStorage.setItem('tally:orders:end', '#' + smax);
+    const prevSel = new Set(JSON.parse(localStorage.getItem('tally:orders:selected') || '[]'));
+    const nextSel = new Set([...prevSel].filter(n => n >= smin && n <= smax));
+    renderRange('#'+smin, '#'+smax, nextSel);
+  });
+
+  function renderRange(startStr, endStr, selectedSet){
+    checkboxList.innerHTML = '';
+    readoutList.innerHTML = '';
+    const s = normalizeNum(startStr);
+    const e = normalizeNum(endStr);
+    const smin = Math.min(s,e), smax = Math.max(s,e);
+
+    // Left: checkbox lines, descending
+    for(let n = smax; n >= smin; n--){
+      const line = document.createElement('label');
+      line.className = 'checkbox-line';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.order = String(n);
+      cb.checked = selectedSet.has(n);
+      cb.addEventListener('change', onToggle);
+      line.appendChild(cb);
+      line.appendChild(document.createTextNode('#'+n));
+      checkboxList.appendChild(line);
+    }
+
+    // Right: readout lines, descending, strikethrough red for unselected
+    for(let n = smax; n >= smin; n--){
+      const div = document.createElement('div');
+      div.className = 'order-line' + (selectedSet.has(n) ? '' : ' unselected');
+      div.dataset.order = String(n);
+      div.textContent = '#'+n;
+      readoutList.appendChild(div);
+    }
+
+    saveSelected(selectedSet);
+    updateCounters(selectedSet, smin, smax);
+  }
+
+  function onToggle(e){
+    const cb = e.target;
+    const n = parseInt(cb.dataset.order, 10);
+    const sel = new Set(JSON.parse(localStorage.getItem('tally:orders:selected') || '[]'));
+    if(cb.checked) sel.add(n); else sel.delete(n);
+    saveSelected(sel);
+    // mirror in readout
+    const line = readoutList.querySelector(`.order-line[data-order="${n}"]`);
+    if(line){
+      line.classList.toggle('unselected', !cb.checked);
+    }
+    const s = normalizeNum(localStorage.getItem('tally:orders:start'));
+    const e2 = normalizeNum(localStorage.getItem('tally:orders:end'));
+    if(s!==null && e2!==null){
+      updateCounters(sel, Math.min(s,e2), Math.max(s,e2));
+    }
+  }
+
+  function saveSelected(set){
+    const arr = Array.from(set).sort((a,b)=>a-b);
+    localStorage.setItem('tally:orders:selected', JSON.stringify(arr));
+  }
+
+  function updateCounters(set, smin, smax){
+    const total = smax - smin + 1;
+    const selected = set.size;
+    orderCount.textContent = selected;
+    orderCountMeta.textContent = `selected of ${total} total`;
+  }
+
+  // Copy helpers
+  copySelectedBtn.addEventListener('click', async ()=>{
+    const sel = new Set(JSON.parse(localStorage.getItem('tally:orders:selected') || '[]'));
+    const numbersDesc = Array.from(sel).sort((a,b)=>b-a).map(n => '#'+n).join('\n');
+    try{
+      await navigator.clipboard.writeText(numbersDesc);
+      copySelectedBtn.textContent = 'Copied!';
+      setTimeout(()=>copySelectedBtn.textContent='Copy Selected', 1200);
+    }catch{ alert('Could not copy. Select text and copy manually.'); }
+  });
+
+  copyAllLinesBtn.addEventListener('click', async ()=>{
+    const s = normalizeNum(localStorage.getItem('tally:orders:start'));
+    const e = normalizeNum(localStorage.getItem('tally:orders:end'));
+    if(s===null || e===null){ alert('Generate a range first.'); return; }
+    const smin = Math.min(s,e), smax = Math.max(s,e);
+    const sel = new Set(JSON.parse(localStorage.getItem('tally:orders:selected') || '[]'));
+    const lines = [];
+    for(let n = smax; n >= smin; n--){
+      const picked = sel.has(n);
+      // markdown ~~ for unselected
+      lines.push((picked ? '' : '~~') + '#'+n + (picked ? '' : '~~'));
+    }
+    const text = lines.join('\n');
+    try{
+      await navigator.clipboard.writeText(text);
+      copyAllLinesBtn.textContent = 'Copied!';
+      setTimeout(()=>copyAllLinesBtn.textContent='Copy All Lines', 1200);
+    }catch{ alert('Could not copy. Select text and copy manually.'); }
+  });
+
+  // Bulk controls
+  selectAllBtn.addEventListener('click', ()=>{
+    const inputs = checkboxList.querySelectorAll('input[type="checkbox"]');
+    const sel = new Set();
+    inputs.forEach(cb => { cb.checked = true; sel.add(parseInt(cb.dataset.order, 10)); });
+    saveSelected(sel);
+    // update list
+    readoutList.querySelectorAll('.order-line').forEach(div => div.classList.remove('unselected'));
+    const s = normalizeNum(localStorage.getItem('tally:orders:start'));
+    const e2 = normalizeNum(localStorage.getItem('tally:orders:end'));
+    if(s!==null && e2!==null){
+      updateCounters(sel, Math.min(s,e2), Math.max(s,e2));
+    }
+  });
+
+  clearSelectedBtn.addEventListener('click', ()=>{
+    const inputs = checkboxList.querySelectorAll('input[type="checkbox"]');
+    inputs.forEach(cb => cb.checked = false);
+    const sel = new Set();
+    saveSelected(sel);
+    // update list
+    readoutList.querySelectorAll('.order-line').forEach(div => div.classList.add('unselected'));
+    const s = normalizeNum(localStorage.getItem('tally:orders:start'));
+    const e2 = normalizeNum(localStorage.getItem('tally:orders:end'));
+    if(s!==null && e2!==null){
+      updateCounters(sel, Math.min(s,e2), Math.max(s,e2));
+    }
+  });
+
+})();
 </script>
 </body>
 </html>
