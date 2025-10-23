@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  const API = "https://script.google.com/macros/s/AKfycbwqWJXvKFwLM93rwUNb0jT5xQGgy3HXkOxTuleMEaGtcHPbQou9z4JlCiPnQ8YmtTf8/exec";
+  const API = "https://script.google.com/macros/s/AKfycby0QbuUt1JStLpMyMEOqOX9ib3KbESE5SM0tBGEghFTIxkisY0_r_UujCuMQ9yZbyu3/exec";
   const r = await fetch(API, {
     method: req.method,
     headers: { "Content-Type": "application/json" },
