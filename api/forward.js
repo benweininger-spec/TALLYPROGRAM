@@ -6,9 +6,11 @@ export default async function handler(req, res) {
     body: req.method === "POST" ? JSON.stringify(req.body) : undefined,
   });
   const txt = await r.text();
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  res.status(r.status).send(txt);
+res.setHeader("Access-Control-Allow-Origin", "*");
+res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+res.setHeader("Content-Type", "application/json");  // ✅ add this line
+if (req.method === "OPTIONS") return res.status(200).end();
+res.status(r.status).send(txt);
+
 }
