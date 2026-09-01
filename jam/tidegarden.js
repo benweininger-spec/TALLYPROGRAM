@@ -116,12 +116,20 @@
     function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
     // Euclidean rhythm: k onsets in n steps (Bjorklund via rounding), rotated.
+    // Memoized (16x16 combos for n=16) — resolveStep calls this per seed per
+    // step, so the cache removes a per-step array allocation entirely.
+    const euclidCache = new Map();
     function euclid(k, n, rot) {
-      const pat = new Array(n).fill(false);
-      if (k <= 0) return pat;
-      for (let i = 0; i < n; i++) {
-        pat[(i + rot) % n] = Math.floor(i * k / n) !== Math.floor((i - 1) * k / n);
+      const key = k * 1000 + n * 20 + rot;
+      let pat = euclidCache.get(key);
+      if (pat) return pat;
+      pat = new Array(n).fill(false);
+      if (k > 0) {
+        for (let i = 0; i < n; i++) {
+          pat[(i + rot) % n] = Math.floor(i * k / n) !== Math.floor((i - 1) * k / n);
+        }
       }
+      euclidCache.set(key, pat);
       return pat;
     }
 
@@ -475,12 +483,62 @@
   }
 
   // ===== Store =====
-  // Round 7 delivers the v1 hash codec + restore crossfade. Placeholder API shape.
+  // v1 codec, URL-hash-safe (digits and . , ; | - only):
+  //   "v1|tempo,swing,root,modeIdx,mutation,tide|x,y,voiceIdx,k,prob,muted;..."
+  // Engine assembly owns applying a decoded snapshot (crossfade, onRestore).
   function createStore() {
-    return {
-      snapshot() { return 'v1|'; },   // stub
-      restore(_str) { return false; } // stub
-    };
+    const MODES = ['ionian', 'dorian', 'mixolydian', 'aeolian', 'majPent', 'minPent'];
+    const VOICE_NAMES = ['bloom', 'drift', 'pulse'];
+    const r3 = v => Math.round(v * 1000) / 1000;
+
+    function encode(settings, seedsMap) {
+      const s = settings;
+      const head = [s.tempo, r3(s.swing), s.root, Math.max(0, MODES.indexOf(s.mode)),
+                    r3(s.mutation), r3(s.tide)].join(',');
+      const body = [];
+      seedsMap.forEach(sd => {
+        body.push([r3(sd.x), r3(sd.y), Math.max(0, VOICE_NAMES.indexOf(sd.voice)),
+                   sd.k, r3(sd.probability), sd.muted ? 1 : 0].join(','));
+      });
+      return 'v1|' + head + '|' + body.join(';');
+    }
+
+    function decode(str) {
+      try {
+        if (typeof str !== 'string' || !str.startsWith('v1|')) return null;
+        const parts = str.split('|');
+        if (parts.length < 3) return null;
+        const h = parts[1].split(',').map(Number);
+        if (h.length < 6 || h.some(n => !isFinite(n))) return null;
+        const settings = {
+          tempo: Math.min(140, Math.max(60, h[0])),
+          swing: Math.min(0.6, Math.max(0, h[1])),
+          root: ((Math.round(h[2]) % 12) + 12) % 12,
+          mode: MODES[Math.round(h[3])] || 'ionian',
+          mutation: Math.min(1, Math.max(0, h[4])),
+          tide: Math.min(1, Math.max(0, h[5]))
+        };
+        const seeds = [];
+        if (parts[2]) {
+          for (const chunk of parts[2].split(';')) {
+            const f = chunk.split(',').map(Number);
+            if (f.length < 6 || f.some(n => !isFinite(n))) continue;
+            seeds.push({
+              x: Math.min(1, Math.max(0, f[0])),
+              y: Math.min(1, Math.max(0, f[1])),
+              voice: VOICE_NAMES[Math.round(f[2])] || 'bloom',
+              k: Math.min(CONST.STEPS, Math.max(1, Math.round(f[3]))),
+              probability: Math.min(1, Math.max(0, f[4])),
+              muted: f[5] === 1
+            });
+            if (seeds.length >= CONST.MAX_SEEDS) break;
+          }
+        }
+        return { settings, seeds };
+      } catch (e) { return null; }
+    }
+
+    return { encode, decode };
   }
 
   // ===== engine assembly =====
@@ -605,6 +663,79 @@
         return ctx;
       }
 
+      // --- snapshot / restore / hash sync ---
+      let hashTimer = null;
+      let restoring = false;
+
+      function barDurNow() {
+        return scheduler ? scheduler.stepDur() * CONST.STEPS : 2.4;
+      }
+
+      function doSnapshot() { return store.encode(state, garden.seeds); }
+
+      // Debounced (2s) location.hash auto-update on any garden/setting change.
+      function markDirty() {
+        if (restoring) return;
+        if (hashTimer) clearTimeout(hashTimer);
+        hashTimer = setTimeout(() => {
+          hashTimer = null;
+          try { history.replaceState(null, '', '#' + doSnapshot()); } catch (e) {}
+        }, 2000);
+      }
+
+      // Apply decoded snapshot internally. Returns fresh-id seed list for onRestore.
+      function applySnapshot(data) {
+        const st = data.settings;
+        state.tempo = st.tempo; state.swing = st.swing;
+        state.root = st.root; state.mode = st.mode;
+        state.mutation = st.mutation;
+        state.tide = st.tide; state.tideVel = tideVelFor(st.tide);
+        const zone = zoneFor(st.tide);
+        pendingZone = (zone !== state.tideZone) ? zone : null;
+        if (scheduler) { scheduler.setTempo(st.tempo); scheduler.setSwing(st.swing); }
+        garden.seeds.clear();
+        const list = [];
+        data.seeds.forEach(sd => {
+          const id = garden.makeId();
+          garden.seeds.set(id, {
+            x: sd.x, y: sd.y, voice: sd.voice, k: sd.k,
+            probability: sd.probability, muted: sd.muted, mutOff: 0
+          });
+          list.push({ id, x: sd.x, y: sd.y, voice: sd.voice, k: sd.k,
+                      probability: sd.probability, muted: sd.muted });
+        });
+        return list;
+      }
+
+      // Restore with a one-bar musical crossfade when audible: master ramps
+      // out over the first half bar, garden+settings swap at the midpoint,
+      // master ramps back while tide/filter glide to the restored values.
+      function doRestore(str) {
+        const data = store.decode(str);
+        if (!data) return false;
+        restoring = true;
+        const finish = () => {
+          const seeds = applySnapshot(data);
+          if (bus) bus.setTideFreq(state.tide, ctx.currentTime, barDurNow() / 2);
+          restoring = false;
+          if (cb.onRestore) cb.onRestore(seeds, Object.assign({}, data.settings));
+        };
+        if (ctx && ctx.state === 'running' && scheduler && scheduler.running) {
+          const bar = barDurNow();
+          const t = ctx.currentTime;
+          const g = bus.master.gain;
+          g.cancelScheduledValues(t);
+          g.setValueAtTime(Math.max(0.03, g.value || 0.9), t);
+          g.exponentialRampToValueAtTime(0.03, t + bar / 2);
+          g.setValueAtTime(0.03, t + bar / 2);
+          g.exponentialRampToValueAtTime(0.9, t + bar);
+          setTimeout(finish, (bar / 2) * 1000);
+        } else {
+          finish(); // silent (pre-unlock or stopped): instant apply
+        }
+        return true;
+      }
+
       // Audio unlock on first gesture: veil click/tap/keydown resumes context.
       function unlock() {
         const c = ensureCtx();
@@ -631,8 +762,8 @@
         // --- transport / params (functional) ---
         start() { ensureCtx(); if (ctx.state === 'suspended') ctx.resume(); scheduler.start(); },
         stop() { if (scheduler) scheduler.stop(); },
-        setTempo(bpm) { state.tempo = bpm; if (scheduler) scheduler.setTempo(bpm); },
-        setSwing(s) { state.swing = s; if (scheduler) scheduler.setSwing(s); },
+        setTempo(bpm) { state.tempo = bpm; if (scheduler) scheduler.setTempo(bpm); markDirty(); },
+        setSwing(s) { state.swing = s; if (scheduler) scheduler.setSwing(s); markDirty(); },
         setTide(v) {
           state.tide = Math.min(1, Math.max(0, v));
           state.tideVel = tideVelFor(state.tide);
@@ -646,10 +777,11 @@
               bus.setTideFreq(state.tide, ctx.currentTime, 0);
             }
           }
+          markDirty();
         },
-        setRoot(r) { state.root = ((r % 12) + 12) % 12; },
-        setMode(m) { if (Theory.SCALES[m]) state.mode = m; },
-        setMutation(v) { state.mutation = Math.min(1, Math.max(0, v)); },
+        setRoot(r) { state.root = ((r % 12) + 12) % 12; markDirty(); },
+        setMode(m) { if (Theory.SCALES[m]) state.mode = m; markDirty(); },
+        setMutation(v) { state.mutation = Math.min(1, Math.max(0, v)); markDirty(); },
         now() { return ctx ? ctx.currentTime : 0; },
 
         // --- garden ---
@@ -660,22 +792,23 @@
             x: opts.x, y: opts.y, voice: opts.voice || 'bloom',
             k: 5, probability: 1, muted: false, mutOff: 0
           });
+          markDirty();
           return id;
         },
         move(id, x, y) {
           const s = garden.seeds.get(id);
-          if (s) { s.x = x; s.y = y; }
+          if (s) { s.x = x; s.y = y; markDirty(); }
         },
         setDensity(id, k) {
           const s = garden.seeds.get(id);
-          if (s) s.k = Math.min(CONST.STEPS, Math.max(1, Math.round(k)));
+          if (s) { s.k = Math.min(CONST.STEPS, Math.max(1, Math.round(k))); markDirty(); }
         },
         setProbability(id, p) {
           const s = garden.seeds.get(id);
-          if (s) s.probability = Math.min(1, Math.max(0, p));
+          if (s) { s.probability = Math.min(1, Math.max(0, p)); markDirty(); }
         },
-        mute(id, b) { const s = garden.seeds.get(id); if (s) s.muted = !!b; },
-        remove(id) { garden.seeds.delete(id); },
+        mute(id, b) { const s = garden.seeds.get(id); if (s) { s.muted = !!b; markDirty(); } },
+        remove(id) { if (garden.seeds.delete(id)) markDirty(); },
         // Audible retune preview while dragging: seed's own voice through the
         // master bus (tide filter applies), reverb send fixed low (0.15) so
         // drags don't wash out, velocity capped at 0.7.
@@ -708,12 +841,20 @@
         },
 
         // --- state ---
-        snapshot() { return store.snapshot(); },
-        restore(str) { return store.restore(str); },
+        snapshot() { return doSnapshot(); },
+        restore(str) { return doRestore(str); },
 
         // internals exposed read-only for debugging during build
         _debug: { CONST, PALETTE, Theory, state, garden }
       };
+
+      // Hash auto-load: parse location.hash on create. Deferred a tick so the
+      // caller has wired its UI before onRestore fires; sounding is naturally
+      // deferred until unlock (no AudioContext yet => silent instant apply).
+      try {
+        const h = decodeURIComponent(location.hash.slice(1));
+        if (h.startsWith('v1|')) setTimeout(() => doRestore(h), 0);
+      } catch (e) {}
 
       return engine;
     },
