@@ -147,7 +147,7 @@
     // FDN reverb: 4 delays 43/61/79/101ms, feedback 0.65, damping lowpass 3kHz
     const times = [0.043, 0.061, 0.079, 0.101];
     const wet = ctx.createGain();
-    wet.gain.value = 0.8;
+    wet.gain.value = 0.7;
     const delays = times.map(t => {
       const d = ctx.createDelay(0.5); d.delayTime.value = t;
       const fb = ctx.createGain(); fb.gain.value = 0.65;
@@ -173,7 +173,7 @@
     comp.knee.value = 12;
 
     const master = ctx.createGain();
-    master.gain.value = 0.9;
+    master.gain.value = 0.85;
 
     input.connect(tideFilter);
     wet.connect(tideFilter);
@@ -268,7 +268,7 @@
       lp.frequency.exponentialRampToValueAtTime(1200, when + 0.35);
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, when);
-      g.gain.linearRampToValueAtTime(0.5 * vel, when + 0.003);
+      g.gain.linearRampToValueAtTime(0.42 * vel, when + 0.003);
       g.gain.exponentialRampToValueAtTime(0.001, when + 0.35);
       osc.connect(lp); lp.connect(g);
       const outs = route(g, pan, send);
@@ -293,7 +293,7 @@
       lfo.connect(lfoG); lfoG.connect(lp.frequency);
       const g = ctx.createGain();
       const sus = stepDur * 4;
-      const lvl = 0.16 * vel;
+      const lvl = 0.14 * vel;
       g.gain.setValueAtTime(0.0001, when);
       g.gain.linearRampToValueAtTime(lvl, when + 0.4);
       g.gain.setValueAtTime(lvl, when + Math.max(0.4, sus));
@@ -313,7 +313,7 @@
       osc.frequency.setValueAtTime(150, when);
       osc.frequency.exponentialRampToValueAtTime(50, when + 0.08);
       const g = ctx.createGain();
-      g.gain.setValueAtTime(0.8 * vel, when);
+      g.gain.setValueAtTime(0.7 * vel, when);
       g.gain.exponentialRampToValueAtTime(0.001, when + 0.25);
       osc.connect(g);
       const outs = route(g, pan * 0.3, send * 0.5); // kicks stay centered/dry-ish
@@ -339,7 +339,7 @@
       hp.type = 'highpass'; hp.frequency.value = 7000;
       const g = ctx.createGain();
       const dec = decay || 0.05;
-      g.gain.setValueAtTime(0.3 * vel, when);
+      g.gain.setValueAtTime(0.25 * vel, when);
       g.gain.exponentialRampToValueAtTime(0.001, when + dec);
       src.connect(hp); hp.connect(g);
       const outs = route(g, pan, send);
@@ -379,6 +379,12 @@
     function stepDur() { return (15 / tempo) * (halfTime ? 2 : 1); } // 16th at bpm
 
     function tick() {
+      // After tab sleep / context suspension the clock may be far ahead of
+      // nextStepTime; without a clamp we'd burst-schedule every missed step.
+      // Skip the missed steps and rejoin cleanly just ahead of now.
+      if (nextStepTime < ctx.currentTime - 0.25) {
+        nextStepTime = ctx.currentTime + 0.05;
+      }
       const horizon = ctx.currentTime + CONST.LOOKAHEAD;
       while (nextStepTime < horizon) {
         // swing: delay odd 8ths (steps 2,6,10,14 => odd 8th positions)
@@ -493,7 +499,7 @@
 
     function encode(settings, seedsMap) {
       const s = settings;
-      const head = [s.tempo, r3(s.swing), s.root, Math.max(0, MODES.indexOf(s.mode)),
+      const head = [Math.round(s.tempo * 10) / 10, r3(s.swing), s.root, Math.max(0, MODES.indexOf(s.mode)),
                     r3(s.mutation), r3(s.tide)].join(',');
       const body = [];
       seedsMap.forEach(sd => {
@@ -592,9 +598,9 @@
           bus.tideFilter.frequency.cancelScheduledValues(when);
           bus.tideFilter.frequency.setValueAtTime(bus.tideFilter.frequency.value, when);
           bus.tideFilter.frequency.exponentialRampToValueAtTime(400, when + barDur);
-          bus.wet.gain.setTargetAtTime(1.2, when, barDur / 3);
+          bus.wet.gain.setTargetAtTime(1.05, when, barDur / 3);
         } else {
-          bus.wet.gain.setTargetAtTime(0.8, when, barDur / 3);
+          bus.wet.gain.setTargetAtTime(0.7, when, barDur / 3);
           bus.setTideFreq(state.tide, when, barDur);
         }
         if (cb.onTideZone) cb.onTideZone(zone);
@@ -725,10 +731,10 @@
           const t = ctx.currentTime;
           const g = bus.master.gain;
           g.cancelScheduledValues(t);
-          g.setValueAtTime(Math.max(0.03, g.value || 0.9), t);
+          g.setValueAtTime(Math.max(0.03, g.value || 0.85), t);
           g.exponentialRampToValueAtTime(0.03, t + bar / 2);
           g.setValueAtTime(0.03, t + bar / 2);
-          g.exponentialRampToValueAtTime(0.9, t + bar);
+          g.exponentialRampToValueAtTime(0.85, t + bar);
           setTimeout(finish, (bar / 2) * 1000);
         } else {
           finish(); // silent (pre-unlock or stopped): instant apply
@@ -756,6 +762,23 @@
       // Safety: resume on any first document gesture (mobile Safari quirk)
       document.addEventListener('pointerdown', () => {
         if (ctx && ctx.state === 'suspended') ctx.resume();
+      });
+
+      // Tab sleep: suspend audio while hidden (battery + avoids throttled-timer
+      // weirdness), resume on return. The scheduler's nextStepTime clamp makes
+      // the rejoin glitch-free — no burst of missed steps.
+      let suspendedByVis = false;
+      document.addEventListener('visibilitychange', () => {
+        if (!ctx) return;
+        if (document.hidden) {
+          if (ctx.state === 'running' && scheduler && scheduler.running) {
+            suspendedByVis = true;
+            ctx.suspend();
+          }
+        } else if (suspendedByVis) {
+          suspendedByVis = false;
+          ctx.resume();
+        }
       });
 
       const engine = {
