@@ -1015,6 +1015,11 @@
   // ===== Renderer =====
   // rAF loop, DPR-scaled canvas, tide gradient, breathing rings (6s cycle),
   // fixed draw order. Skips frames when tab hidden or veil is up.
+  // Honors prefers-reduced-motion: rings stop breathing, ripples become
+  // opacity pulses, cursor dash stops crawling — information is preserved.
+  const REDUCED_MQ = window.matchMedia
+    ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  function reducedMotion() { return !!(REDUCED_MQ && REDUCED_MQ.matches); }
   function createRenderer(canvas, ui) {
     const c2d = canvas.getContext('2d');
     let W = 0, H = 0, dpr = 1;
@@ -1059,10 +1064,12 @@
     function seedDY() { return -4 * tideMix; } // low: sink +4px, high: float -4px
 
     // Concentric tide rings breathing on a 6s cycle (reverb-depth hint).
+    // Reduced motion: same rings, held still at mid-breath.
     function drawRings(tSec) {
       const cx = W / 2, cy = H / 2;
       const maxR = Math.hypot(cx, cy);
-      const breathe = 0.5 + 0.5 * Math.sin(tSec * Math.PI * 2 / 6); // 6s
+      const breathe = reducedMotion()
+        ? 0.5 : 0.5 + 0.5 * Math.sin(tSec * Math.PI * 2 / 6); // 6s
       c2d.strokeStyle = PALETTE.text;
       for (let i = 1; i <= 5; i++) {
         const r = (i / 5) * maxR * (0.96 + 0.04 * breathe);
@@ -1146,7 +1153,8 @@
       const R = ui.radial.state;
       if (!R.active) return;
       const t = (performance.now() - R.openT) / 160;
-      const sc = t >= 1 ? 1 : 1.15 * (1 - Math.pow(1 - Math.min(1, t), 2)); // slight overshoot
+      const sc = reducedMotion() ? 1
+        : (t >= 1 ? 1 : 1.15 * (1 - Math.pow(1 - Math.min(1, t), 2))); // slight overshoot
       const rad = 44 * Math.min(sc, 1.08);
       c2d.strokeStyle = PALETTE.text;
       c2d.globalAlpha = 0.5;
@@ -1186,7 +1194,7 @@
       c2d.globalAlpha = 0.85;
       c2d.lineWidth = 1.5;
       c2d.setLineDash([4, 4]);
-      c2d.lineDashOffset = -(tSec * 12) % 8;   // slow crawl = alive
+      c2d.lineDashOffset = reducedMotion() ? 0 : -(tSec * 12) % 8; // slow crawl
       c2d.beginPath();
       c2d.arc(p.x, p.y, 16, 0, Math.PI * 2);
       c2d.stroke();
@@ -1273,7 +1281,8 @@
       const tNow = performance.now() / 1000;
       // Half-time low tide: ripple expansion speed halves (motion IS the tempo)
       const life = ui.tideZone === 'low' ? 1.2 : 0.6;
-      const high = ui.tideZone === 'high';
+      const reduced = reducedMotion();
+      const high = ui.tideZone === 'high' && !reduced;
       for (let i = 0; i < RIPPLES; i++) {
         const r = R[i];
         if (!r.on) continue;
@@ -1281,7 +1290,9 @@
         if (prog < 0) continue;                   // scheduled, not yet heard
         if (prog >= 1) { r.on = false; continue; }
         const e = 1 - Math.pow(1 - prog, 3);      // ease-out
-        const rad = 10 + e * (24 + 46 * r.vel);
+        // Reduced motion: fixed-size ring, opacity pulse only (same info:
+        // position, voice color, velocity size, chord-tone weight).
+        const rad = reduced ? 18 + 20 * r.vel : 10 + e * (24 + 46 * r.vel);
         c2d.globalAlpha = (1 - e) * (r.ct ? 0.85 : 0.45);
         c2d.strokeStyle = r.color;
         c2d.lineWidth = r.ct ? 2.5 : 1.5;
@@ -1305,7 +1316,7 @@
         if (prog < 0) continue;
         if (prog >= 1) { s.on = false; continue; }
         const a = 1 - prog;
-        const len = 4 + 8 * (1 - Math.pow(1 - prog, 2));
+        const len = reduced ? 8 : 4 + 8 * (1 - Math.pow(1 - prog, 2));
         c2d.globalAlpha = a;
         c2d.strokeStyle = PALETTE.text;
         c2d.beginPath();
@@ -1322,7 +1333,12 @@
         c2d.globalAlpha = 1 - f;
         c2d.fillStyle = p.color;
         c2d.beginPath();
-        c2d.arc(p.x + p.vx * dt, p.y + p.vy * dt, 3 * (1 - f) + 1, 0, Math.PI * 2);
+        if (reduced) {
+          // no scatter motion: a still, fading glow marks the uproot spot
+          c2d.arc(p.x, p.y, 6, 0, Math.PI * 2);
+        } else {
+          c2d.arc(p.x + p.vx * dt, p.y + p.vy * dt, 3 * (1 - f) + 1, 0, Math.PI * 2);
+        }
         c2d.fill();
       }
       c2d.globalAlpha = 1;
@@ -1697,6 +1713,7 @@
           return;
         }
         ui.sprites.set(id, { x, y, voice: ui.brush, muted: false, k: 5, prob: 1 });
+        if (ui.onGardenChanged) ui.onGardenChanged();
       },
 
       // Velocity-gated preview pluck: pointer slow (<200 px/s), >=90ms since
@@ -1735,6 +1752,7 @@
         engine.remove(id);
         if (s && ui.fx) ui.fx.scatter(s.x, s.y, PALETTE[s.voice] || PALETTE.bloom);
         ui.sprites.delete(id);
+        if (ui.onGardenChanged) ui.onGardenChanged();
       }
     };
 
@@ -1768,6 +1786,7 @@
           });
         }
         if (ui.dock) ui.dock.sync(settings);
+        if (ui.onGardenChanged) ui.onGardenChanged();
       }
     });
     ui.radial = createRadial(ui, engine);
@@ -1775,6 +1794,43 @@
     createInput(canvas, ui);
     ui.dock = createDock(ui, engine);
     renderer.start();
+
+    // --- empty-state hint: gentle copy while the garden has no seeds ---
+    const hint = document.getElementById('hint');
+    function updateHint() {
+      if (hint) hint.classList.toggle('show', !ui.veilUp() && ui.sprites.size === 0);
+    }
+    ui.onGardenChanged = updateHint;
+    if (veil) {
+      veil.addEventListener('pointerdown', () => setTimeout(updateHint, 0));
+      veil.addEventListener('keydown', () => setTimeout(updateHint, 0));
+    }
+    updateHint();
+
+    // --- help overlay: "?" button, Escape/click closes, focus returns ---
+    const helpBtn = document.getElementById('help-btn');
+    const help = document.getElementById('help');
+    if (helpBtn && help) {
+      const closeBtn = help.querySelector('.close');
+      let lastFocus = null;
+      function openHelp() {
+        lastFocus = document.activeElement;
+        help.hidden = false;
+        closeBtn.focus();
+      }
+      function closeHelp() {
+        help.hidden = true;
+        if (lastFocus && lastFocus.focus) lastFocus.focus();
+      }
+      helpBtn.addEventListener('click', openHelp);
+      closeBtn.addEventListener('click', closeHelp);
+      help.addEventListener('click', (e) => { if (e.target === help) closeHelp(); });
+      window.addEventListener('keydown', (e) => {
+        if (help.hidden) return;
+        if (e.key === 'Escape') { closeHelp(); e.stopPropagation(); e.preventDefault(); }
+        if (e.key === 'Tab') { closeBtn.focus(); e.preventDefault(); } // single-stop trap
+      }, true); // capture: beats the keyboard-cursor handler while open
+    }
 
     // expose for build-time debugging
     window._tg = { engine, ui };
