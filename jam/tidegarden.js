@@ -742,8 +742,35 @@
         return true;
       }
 
+      // iOS routes Web Audio through the "ambient" session, which the ring/
+      // silent switch mutes. Playing a looping (silent) HTML media element
+      // flips the session to "playback", which the switch does not mute.
+      let routeEl = null;
+      function forceAudibleRoute() {
+        if (routeEl) return;
+        try {
+          routeEl = document.createElement('audio');
+          routeEl.setAttribute('playsinline', '');
+          routeEl.loop = true;
+          routeEl.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAAAA';
+          const p = routeEl.play();
+          if (p && p.catch) p.catch(() => { routeEl = null; });
+        } catch (e) { routeEl = null; }
+      }
+
+      // Soft two-note welcome chime on unlock: instant proof audio is live.
+      function welcomeChime() {
+        if (!ctx || !voices) return;
+        const t = ctx.currentTime + 0.05;
+        voices.playNote({ voice: 'bloom', midi: 60, velocity: 0.5, when: t,
+                          pan: -0.2, reverbSend: 0.3, stepDur: 0.15 });
+        voices.playNote({ voice: 'bloom', midi: 67, velocity: 0.5, when: t + 0.18,
+                          pan: 0.2, reverbSend: 0.3, stepDur: 0.15 });
+      }
+
       // Audio unlock on first gesture: veil click/tap/keydown resumes context.
       function unlock() {
+        forceAudibleRoute();
         const c = ensureCtx();
         if (c.state === 'suspended') c.resume();
       }
@@ -753,6 +780,7 @@
           unlock();
           veil.hidden = true;
           engine.start();
+          welcomeChime();
         };
         veil.addEventListener('pointerdown', onUnlock, { once: true });
         veil.addEventListener('keydown', (e) => {
@@ -1713,6 +1741,7 @@
           return;
         }
         ui.sprites.set(id, { x, y, voice: ui.brush, muted: false, k: 5, prob: 1 });
+        engine.previewPluck(id);   // planting sounds immediately
         if (ui.onGardenChanged) ui.onGardenChanged();
       },
 
