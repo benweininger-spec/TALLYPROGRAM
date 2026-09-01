@@ -873,6 +873,7 @@
 
     function reset() {
       if (S.holdTimer) { clearTimeout(S.holdTimer); S.holdTimer = null; }
+      if (S.mode === 'radial') ui.radial.cancel();  // no commit on cancel
       S.mode = 'idle'; S.pid = null; S.seedId = null;
       ui.setDragging(false);
     }
@@ -913,8 +914,7 @@
         S.holdTimer = setTimeout(() => {
           if (S.mode === 'pressed') {
             S.mode = 'radial';
-            // RADIAL stub — full radial menu is build round 8
-            console.log('[radial stub] hold on seed', S.seedId);
+            ui.radial.open(S.seedId);
           }
         }, CONST.HOLD_MS);
       }
@@ -944,14 +944,13 @@
       if (S.mode === 'drag' && S.seedId) {
         ui.moveSeed(S.seedId, p.x, p.y, Math.hypot(S.vx, S.vy));
       }
-      if (S.mode === 'radial') {
-        // round 8: distance = density, angle = probability
-      }
+      if (S.mode === 'radial') ui.radial.drag(p.x, p.y);
     }
 
     function up(e) {
       if (e.pointerId !== S.pid || S.mode === 'idle') return;
       if (S.mode === 'tide') { reset(); return; }
+      if (S.mode === 'radial') { ui.radial.end(); reset(); return; }
       const now = performance.now();
       const speed = Math.hypot(S.vx, S.vy);
 
@@ -1073,35 +1072,39 @@
 
     function drawSeeds(tSec) {
       const dy = seedDY();
+      const radialActive = ui.radial ? ui.radial.state.active : null;
       c2d.save();
       c2d.translate(0, dy);
-      ui.sprites.forEach((s) => {
+      ui.sprites.forEach((s, id) => {
         const col = PALETTE[s.voice] || PALETTE.bloom;
+        // radial open: others dim 40%; garden-full: everyone pulses once
+        const dim = (radialActive && id !== radialActive) ? 0.6 : 1;
         c2d.fillStyle = col;
         c2d.strokeStyle = col;
         if (s.muted) {
           // mute silhouette: dim outline only, no fill
-          c2d.globalAlpha = 0.35;
+          c2d.globalAlpha = 0.35 * dim;
           c2d.lineWidth = 1.5;
           c2d.beginPath();
           c2d.arc(s.x, s.y, 6, 0, Math.PI * 2);
           c2d.stroke();
         } else {
           // soft halo
-          c2d.globalAlpha = 0.18;
+          c2d.globalAlpha = 0.18 * dim;
           c2d.beginPath();
           c2d.arc(s.x, s.y, 14, 0, Math.PI * 2);
           c2d.fill();
-          // core dot with a gentle step pulse
-          const pulse = (tSec - lastStepFlash.t) < 0.15 ? 1.5 : 0;
-          c2d.globalAlpha = 1;
+          // core dot: step pulse, plus the one-shot garden-full pulse
+          const pulse = ((tSec - lastStepFlash.t) < 0.15 ||
+                         (tSec - (ui.pulseT || -9)) < 0.3) ? 1.5 : 0;
+          c2d.globalAlpha = 1 * dim;
           c2d.beginPath();
           c2d.arc(s.x, s.y, 6 + pulse, 0, Math.PI * 2);
           c2d.fill();
         }
         // k-dot density ring (shown for muted seeds too, dimmer)
         const k = s.k || 5;
-        c2d.globalAlpha = s.muted ? 0.25 : 0.75;
+        c2d.globalAlpha = (s.muted ? 0.25 : 0.75) * dim;
         for (let i = 0; i < k; i++) {
           const a = -Math.PI / 2 + (Math.PI * 2 * i) / k;
           c2d.beginPath();
@@ -1110,6 +1113,61 @@
         }
       });
       c2d.restore();
+      c2d.globalAlpha = 1;
+      c2d.lineWidth = 1;
+    }
+
+    // Radial menu overlay: 160ms spring bloom, detent ring, probability arc.
+    function drawRadial() {
+      if (!ui.radial) return;
+      const R = ui.radial.state;
+      if (!R.active) return;
+      const t = (performance.now() - R.openT) / 160;
+      const sc = t >= 1 ? 1 : 1.15 * (1 - Math.pow(1 - Math.min(1, t), 2)); // slight overshoot
+      const rad = 44 * Math.min(sc, 1.08);
+      c2d.strokeStyle = PALETTE.text;
+      c2d.globalAlpha = 0.5;
+      c2d.lineWidth = 1;
+      c2d.beginPath();
+      c2d.arc(R.cx, R.cy, rad, 0, Math.PI * 2);
+      c2d.stroke();
+      // probability arc: clockwise from 9 o'clock, brightness = probability
+      const frac = (R.prob - 0.3) / 0.7;
+      c2d.globalAlpha = 0.25 + 0.65 * frac;
+      c2d.lineWidth = 3;
+      c2d.beginPath();
+      c2d.arc(R.cx, R.cy, rad + 6, Math.PI, Math.PI + frac * Math.PI * 2);
+      c2d.stroke();
+      // k detent dots filling with density
+      const DET = [1, 2, 3, 5, 7, 9, 11, 13];
+      const ki = DET.indexOf(R.k);
+      c2d.fillStyle = PALETTE.text;
+      for (let i = 0; i < DET.length; i++) {
+        const a = -Math.PI / 2 + (Math.PI * 2 * i) / DET.length;
+        c2d.globalAlpha = i <= ki ? 0.9 : 0.25;
+        c2d.beginPath();
+        c2d.arc(R.cx + Math.cos(a) * (rad - 8), R.cy + Math.sin(a) * (rad - 8),
+                i <= ki ? 2.5 : 1.5, 0, Math.PI * 2);
+        c2d.fill();
+      }
+      c2d.globalAlpha = 1;
+      c2d.lineWidth = 1;
+    }
+
+    // Keyboard cursor: dashed ring at the lattice position.
+    function drawCursor(tSec) {
+      if (!ui.cursor) return;
+      const p = ui.cursor.pos();
+      if (!p) return;
+      c2d.strokeStyle = PALETTE.text;
+      c2d.globalAlpha = 0.85;
+      c2d.lineWidth = 1.5;
+      c2d.setLineDash([4, 4]);
+      c2d.lineDashOffset = -(tSec * 12) % 8;   // slow crawl = alive
+      c2d.beginPath();
+      c2d.arc(p.x, p.y, 16, 0, Math.PI * 2);
+      c2d.stroke();
+      c2d.setLineDash([]);
       c2d.globalAlpha = 1;
       c2d.lineWidth = 1;
     }
@@ -1123,7 +1181,8 @@
         drawShimmer();             // 3. chord-band shimmer (drag only)
         drawSeeds(tSec);           // 4. seeds
         if (ui.fx) ui.fx.draw(c2d, ui.now ? ui.now() : 0); // 5. ripples/petals
-        // 6. keyboard cursor (round 8)
+        drawRadial();              // 6. radial menu overlay
+        drawCursor(tSec);          // 7. keyboard cursor
       }
       requestAnimationFrame(frame);
     }
@@ -1162,13 +1221,18 @@
       s.on = true; s.x = x; s.y = y; s.when = when;
     }
 
+    // Generic expanding ring (also used for the garden-full feedback).
+    function ringAt(x, y, when, color, vel, ct) {
+      const r = R[ri]; ri = (ri + 1) % RIPPLES;
+      r.on = true; r.x = x; r.y = y;
+      r.when = when; r.vel = vel; r.ct = !!ct; r.color = color;
+    }
+
     function ripple(note) {
       const s = ui.sprites.get(note.seedId);
       if (!s) return;
-      const r = R[ri]; ri = (ri + 1) % RIPPLES;
-      r.on = true; r.x = s.x; r.y = s.y;
-      r.when = note.when; r.vel = note.velocity; r.ct = note.chordTone;
-      r.color = PALETTE[note.voice] || PALETTE.bloom;
+      ringAt(s.x, s.y, note.when, PALETTE[note.voice] || PALETTE.bloom,
+             note.velocity, note.chordTone);
     }
 
     function scatter(x, y, color) {
@@ -1241,11 +1305,67 @@
       c2d.globalAlpha = 1;
     }
 
-    return { ripple, scatter, sparkle, draw };
+    return { ripple, ringAt, scatter, sparkle, draw };
   }
 
   // ===== Radial =====
-  // (Pixel — build round 8)
+  // Press-hold radial menu: distance = density (euclid k, detents), angle =
+  // probability 0.3–1.0 clockwise from 9 o'clock. Drawn on the canvas by the
+  // Renderer (single render path); this module owns state + math + commit.
+  function createRadial(ui, engine) {
+    const DETENTS = [1, 2, 3, 5, 7, 9, 11, 13];
+    const R = {
+      active: null,   // seed id while open
+      cx: 0, cy: 0,   // seed center (px)
+      k: 5, prob: 1,  // live values (previewed on the sprite)
+      openT: 0,       // for the 160ms spring bloom
+      origK: 5, origProb: 1
+    };
+
+    function open(id) {
+      const s = ui.sprites.get(id);
+      if (!s) return;
+      R.active = id; R.cx = s.x; R.cy = s.y;
+      R.k = R.origK = s.k || 5;
+      R.prob = R.origProb = (s.prob == null ? 1 : s.prob);
+      R.openT = performance.now();
+    }
+
+    function drag(x, y) {
+      if (!R.active) return;
+      const s = ui.sprites.get(R.active);
+      if (!s) { R.active = null; return; }
+      const dx = x - R.cx, dy = y - R.cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 28) {
+        // distance -> density detents
+        const idx = Math.min(DETENTS.length - 1, Math.floor((dist - 28) / 14));
+        R.k = DETENTS[idx];
+        // angle -> probability, clockwise from 9 o'clock (screen coords)
+        const a = Math.atan2(dy, dx);                       // 0 right, pi left
+        const frac = ((a - Math.PI) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2);
+        R.prob = 0.3 + 0.7 * frac;
+      }
+      s.k = R.k; s.prob = R.prob;   // live k-dot ring preview
+    }
+
+    function end() {                // release commits
+      if (!R.active) return;
+      engine.setDensity(R.active, R.k);
+      engine.setProbability(R.active, R.prob);
+      engine.previewPluck(R.active);
+      R.active = null;
+    }
+
+    function cancel() {             // pointercancel: revert preview
+      if (!R.active) return;
+      const s = ui.sprites.get(R.active);
+      if (s) { s.k = R.origK; s.prob = R.origProb; }
+      R.active = null;
+    }
+
+    return { state: R, open, drag, end, cancel };
+  }
 
   // ===== Dock =====
   // Real controls wired to the engine, plus the tide rail (accessible tide).
@@ -1291,6 +1411,7 @@
     setBrush(ui.brush);
 
     // --- ranges with data-fmt labels ---
+    const ranges = {};
     function wireRange(id, apply) {
       const el = $(id);
       const out = el.parentElement.querySelector('output');
@@ -1301,11 +1422,29 @@
       };
       el.addEventListener('input', update);
       update();
-      return el;
+      ranges[id] = { el, update };
     }
     wireRange('tempo', (v) => { engine.setTempo(v); ui.barSec = (16 * 15) / v; });
     wireRange('swing', (v) => engine.setSwing(v / 100));
     wireRange('mutation', (v) => engine.setMutation(v / 100));
+
+    // --- share: hash + copy link, morphs to confirmation ---
+    const share = $('share');
+    share.addEventListener('click', () => {
+      try { history.replaceState(null, '', '#' + engine.snapshot()); } catch (e) {}
+      const url = location.href;
+      const done = () => {
+        share.textContent = '✓ copied';
+        setTimeout(() => { share.textContent = 'share'; }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(done, () => {
+          window.prompt('Copy your garden link:', url);
+        });
+      } else {
+        window.prompt('Copy your garden link:', url);
+      }
+    });
 
     // --- collapse chevron ---
     toggle.addEventListener('click', () => {
@@ -1342,11 +1481,99 @@
     });
     showTide(ui.tide);
 
-    return { showTide };
+    // Resync every control after a snapshot restore (engine already applied
+    // the settings — this only refreshes the UI, setters echo same values).
+    function sync(st) {
+      root.value = String(st.root);
+      mode.value = st.mode;
+      ui.music.root = st.root;
+      ui.music.mode = st.mode;
+      ranges.tempo.el.value = String(st.tempo); ranges.tempo.update();
+      ranges.swing.el.value = String(Math.round(st.swing * 100)); ranges.swing.update();
+      ranges.mutation.el.value = String(Math.round(st.mutation * 100)); ranges.mutation.update();
+      ui.tide = st.tide;
+      showTide(st.tide);
+    }
+
+    return { showTide, sync };
   }
 
   // ===== Cursor =====
-  // (Pixel — build round 8)
+  // Keyboard mode: dashed-ring cursor on the scale lattice. Arrows move
+  // (up/down = scale degree, left/right = 1/16 x-step; shift = octave / 4
+  // steps), Enter plants, Delete uproots, M mutes, [ ] density, ; ' prob.
+  function createCursor(ui, engine) {
+    const C = { on: false, xs: 8, idx: 10 };  // x step 0..15, lattice index
+
+    function scaleLen() {
+      return (ui.uiScales[ui.music.mode] || ui.uiScales.ionian).length;
+    }
+    function span() { return scaleLen() * 3; }
+    function px() { return { x: (C.xs + 0.5) / CONST.STEPS * window.innerWidth,
+                             y: (1 - C.idx / (span() - 1)) * window.innerHeight }; }
+    function seedUnder() {
+      const p = px();
+      let best = null, bestD = CONST.HIT_RADIUS;
+      ui.sprites.forEach((s, id) => {
+        const d = Math.hypot(s.x - p.x, s.y - p.y);
+        if (d <= bestD) { bestD = d; best = id; }
+      });
+      return best;
+    }
+    function pos() { return C.on ? px() : null; }
+
+    function isFormTarget(e) {
+      const t = e.target;
+      return t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' ||
+                   t.tagName === 'BUTTON' || t.id === 'tide-rail' ||
+                   t.id === 'start-veil');
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (isFormTarget(e) || ui.veilUp()) return;
+      const key = e.key;
+      const arrows = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+      if (arrows.includes(key)) {
+        e.preventDefault();
+        if (!C.on) { C.on = true; return; }  // first arrow just reveals cursor
+        const big = e.shiftKey;
+        if (key === 'ArrowUp')    C.idx = Math.min(span() - 1, C.idx + (big ? scaleLen() : 1));
+        if (key === 'ArrowDown')  C.idx = Math.max(0, C.idx - (big ? scaleLen() : 1));
+        if (key === 'ArrowRight') C.xs = (C.xs + (big ? 4 : 1)) % CONST.STEPS;
+        if (key === 'ArrowLeft')  C.xs = (C.xs - (big ? 4 : 1) + CONST.STEPS) % CONST.STEPS;
+        return;
+      }
+      if (!C.on) return;
+      if (key === 'Escape') { C.on = false; return; }
+      const p = px();
+      const id = seedUnder();
+      if (key === 'Enter') {
+        if (!id) ui.plantAt(p.x, p.y);
+        return e.preventDefault();
+      }
+      if (!id) return;
+      const s = ui.sprites.get(id);
+      if (key === 'Delete' || key === 'Backspace') {
+        ui.uprootSeed(id); e.preventDefault();
+      } else if (key === 'm' || key === 'M') {
+        ui.toggleMute(id);
+      } else if (key === '[' || key === ']') {
+        const D = [1, 2, 3, 5, 7, 9, 11, 13];
+        let di = D.indexOf(s.k); if (di < 0) di = 3;
+        di = Math.max(0, Math.min(D.length - 1, di + (key === ']' ? 1 : -1)));
+        s.k = D[di];
+        engine.setDensity(id, s.k);
+        engine.previewPluck(id);
+      } else if (key === ';' || key === "'") {
+        const p0 = s.prob == null ? 1 : s.prob;
+        s.prob = Math.max(0.3, Math.min(1, p0 + (key === "'" ? 0.1 : -0.1)));
+        engine.setProbability(id, s.prob);
+        engine.previewPluck(id);
+      }
+    });
+
+    return { state: C, pos };
+  }
 
   // ===== boot =====
   (function boot() {
@@ -1376,6 +1603,10 @@
       tideZone: 'mid',      // from onTideZone — drives visual grammar
       barSec: 2.4,          // bar duration at current tempo (dock keeps fresh)
       fx: null,             // set below
+      radial: null,         // set below
+      cursor: null,         // set below
+      pulseT: -9,           // one-shot all-seed pulse timestamp (garden full)
+      uiScales: UI_SCALES,  // shared with Cursor for lattice math
       now() { return engine ? engine.now() : 0; },
       setDragging(b) {
         ui.dragging = b;
@@ -1417,16 +1648,32 @@
         return Math.round((1 - ny) * (span - 1));
       },
 
+      // Toast: brief aria-live message pill above the dock.
+      toast(msg) {
+        const t = document.getElementById('toast');
+        if (!t) return;
+        t.textContent = msg;
+        t.classList.add('show');
+        clearTimeout(ui._toastTimer);
+        ui._toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+      },
+
       plantAt(x, y) {
         const id = engine.plant({
           x: x / window.innerWidth, y: y / window.innerHeight, voice: ui.brush
         });
         if (id === null) {
-          // garden full — polite ripple + pulse lands in round 8 (needs toast)
-          console.log('[garden full]');
+          // Garden full: three soft rings, a whispered toast, and every seed
+          // pulses once so the user sees what to prune. Never auto-delete.
+          const now = ui.now();
+          ui.fx.ringAt(x, y, now, PALETTE.text, 0.4, false);
+          ui.fx.ringAt(x, y, now + 0.15, PALETTE.text, 0.3, false);
+          ui.fx.ringAt(x, y, now + 0.3, PALETTE.text, 0.2, false);
+          ui.pulseT = performance.now() / 1000;
+          ui.toast('garden is full');
           return;
         }
-        ui.sprites.set(id, { x, y, voice: ui.brush, muted: false, k: 5 });
+        ui.sprites.set(id, { x, y, voice: ui.brush, muted: false, k: 5, prob: 1 });
       },
 
       // Velocity-gated preview pluck: pointer slow (<200 px/s), >=90ms since
@@ -1485,8 +1732,23 @@
       onMutate(seedId, change) {
         const s = ui.sprites.get(seedId);
         if (s) fx.sparkle(s.x, s.y, change.when);
+      },
+      onRestore(seeds, settings) {
+        // Engine already applied everything — rebuild sprites + resync UI.
+        ui.sprites.clear();
+        const W = window.innerWidth, H = window.innerHeight;
+        for (let i = 0; i < seeds.length; i++) {
+          const sd = seeds[i];
+          ui.sprites.set(sd.id, {
+            x: sd.x * W, y: sd.y * H, voice: sd.voice,
+            muted: sd.muted, k: sd.k, prob: sd.probability
+          });
+        }
+        if (ui.dock) ui.dock.sync(settings);
       }
     });
+    ui.radial = createRadial(ui, engine);
+    ui.cursor = createCursor(ui, engine);
     createInput(canvas, ui);
     ui.dock = createDock(ui, engine);
     renderer.start();

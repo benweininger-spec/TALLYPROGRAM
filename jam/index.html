@@ -43,7 +43,10 @@
     border-radius:8px;color:var(--text);cursor:pointer;font-size:12px;}
   #radial{position:fixed;z-index:45;pointer-events:none;}
   #toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:46;
-    pointer-events:none;}
+    pointer-events:none;background:rgba(5,10,20,.85);border:1px solid rgba(201,214,232,.25);
+    border-radius:999px;padding:8px 16px;font-size:13px;font-weight:600;
+    letter-spacing:.04em;opacity:0;transition:opacity .3s ease;}
+  #toast.show{opacity:1;}
   #tide-rail{position:fixed;right:8px;top:15%;bottom:25%;width:24px;z-index:40;
     border-radius:12px;background:rgba(201,214,232,.08);cursor:ns-resize;
     touch-action:none;}
@@ -76,7 +79,7 @@
   <span class="ctl"><label for="mutation">mutate</label>
     <input id="mutation" type="range" min="0" max="100" step="1" value="0"
       data-fmt="%" aria-label="Mutation amount"><output for="mutation"></output></span>
-  <span class="ctl"><button id="share" aria-label="Copy share link" disabled>share</button></span>
+  <span class="ctl"><button id="share" aria-label="Copy share link">share</button></span>
 </nav>
 <button id="dock-toggle" aria-label="Collapse controls" aria-expanded="true">&#9662;</button>
 
