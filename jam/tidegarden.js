@@ -751,7 +751,16 @@
     }
 
     function down(e) {
-      if (S.mode !== 'idle') { reset(); return; } // 2nd pointer: safe reset
+      // Whole-screen tide gesture: right-button drag, or a second finger
+      // landing during any touch gesture (cancels it, becomes tide).
+      if (e.button === 2 || S.mode !== 'idle') {
+        if (S.holdTimer) { clearTimeout(S.holdTimer); S.holdTimer = null; }
+        ui.setDragging(false);
+        S.mode = 'tide'; S.pid = e.pointerId; S.seedId = null;
+        S.py = e.clientY;
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
       const p = pos(e);
       S.mode = 'pressed'; S.pid = e.pointerId;
       S.sx = S.px = S.x = p.x; S.sy = S.py = S.y = p.y;
@@ -772,6 +781,12 @@
 
     function move(e) {
       if (e.pointerId !== S.pid || S.mode === 'idle') return;
+      if (S.mode === 'tide') {
+        const dy = S.py - e.clientY;   // drag up = tide rises
+        S.py = e.clientY;
+        ui.nudgeTide(dy / (window.innerHeight * 0.6));
+        return;
+      }
       const p = pos(e);
       const now = performance.now();
       const dt = Math.max(1, now - S.pt);
@@ -795,6 +810,7 @@
 
     function up(e) {
       if (e.pointerId !== S.pid || S.mode === 'idle') return;
+      if (S.mode === 'tide') { reset(); return; }
       const now = performance.now();
       const speed = Math.hypot(S.vx, S.vy);
 
@@ -824,6 +840,11 @@
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', reset);
     window.addEventListener('blur', reset);
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      ui.nudgeTide(-e.deltaY * 0.0006);   // wheel up = tide rises
+    }, { passive: false });
 
     return { state: S, reset };
   }
@@ -847,13 +868,32 @@
     window.addEventListener('resize', resize);
     resize();
 
+    // Tide-zone visual grammar: -1 low (dark, sunken) .. 0 mid .. 1 high
+    // (lighter, floating). Lerped over ~one bar to track the audio crossfade.
+    let tideMix = 0;
+    function hex(h) { return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+    const RGB_BG = hex(PALETTE.bg), RGB_LOW = hex(PALETTE.bgLow),
+          RGB_HIGH = hex(PALETTE.bgHigh), RGB_TOP = hex('#1B3A5C');
+    function mix(a, b, t) {
+      return 'rgb(' + Math.round(a[0] + (b[0] - a[0]) * t) + ',' +
+        Math.round(a[1] + (b[1] - a[1]) * t) + ',' +
+        Math.round(a[2] + (b[2] - a[2]) * t) + ')';
+    }
+
     function drawBackground() {
+      const target = ui.tideZone === 'low' ? -1 : ui.tideZone === 'high' ? 1 : 0;
+      const rate = 1 / (60 * (ui.barSec || 2.4));   // ~one bar at 60fps
+      tideMix += Math.max(-rate, Math.min(rate, target - tideMix));
+      const m = tideMix;
+      const bottom = m < 0 ? mix(RGB_BG, RGB_LOW, -m) : mix(RGB_BG, RGB_HIGH, m);
+      const top = m < 0 ? mix(RGB_HIGH, RGB_LOW, -m) : mix(RGB_HIGH, RGB_TOP, m);
       const g = c2d.createLinearGradient(0, 0, 0, H);
-      g.addColorStop(0, PALETTE.bgHigh);
-      g.addColorStop(1, PALETTE.bg);
+      g.addColorStop(0, top);
+      g.addColorStop(1, bottom);
       c2d.fillStyle = g;
       c2d.fillRect(0, 0, W, H);
     }
+    function seedDY() { return -4 * tideMix; } // low: sink +4px, high: float -4px
 
     // Concentric tide rings breathing on a 6s cycle (reverb-depth hint).
     function drawRings(tSec) {
@@ -891,6 +931,9 @@
     }
 
     function drawSeeds(tSec) {
+      const dy = seedDY();
+      c2d.save();
+      c2d.translate(0, dy);
       ui.sprites.forEach((s) => {
         const col = PALETTE[s.voice] || PALETTE.bloom;
         c2d.fillStyle = col;
@@ -925,6 +968,7 @@
           c2d.fill();
         }
       });
+      c2d.restore();
       c2d.globalAlpha = 1;
       c2d.lineWidth = 1;
     }
@@ -966,6 +1010,16 @@
       P.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, t0: 0, color: PALETTE.bloom });
     }
     let pi = 0;
+    const SPARKS = 32;
+    const K = [];
+    for (let i = 0; i < SPARKS; i++) K.push({ on: false, x: 0, y: 0, when: 0 });
+    let ki = 0;
+
+    // Mutation sparkle: brief 4-point star at the seed, fires at audio `when`.
+    function sparkle(x, y, when) {
+      const s = K[ki]; ki = (ki + 1) % SPARKS;
+      s.on = true; s.x = x; s.y = y; s.when = when;
+    }
 
     function ripple(note) {
       const s = ui.sprites.get(note.seedId);
@@ -989,10 +1043,13 @@
 
     function draw(c2d, audioNow) {
       const tNow = performance.now() / 1000;
+      // Half-time low tide: ripple expansion speed halves (motion IS the tempo)
+      const life = ui.tideZone === 'low' ? 1.2 : 0.6;
+      const high = ui.tideZone === 'high';
       for (let i = 0; i < RIPPLES; i++) {
         const r = R[i];
         if (!r.on) continue;
-        const prog = (audioNow - r.when) / 0.6;   // 600ms life
+        const prog = (audioNow - r.when) / life;
         if (prog < 0) continue;                   // scheduled, not yet heard
         if (prog >= 1) { r.on = false; continue; }
         const e = 1 - Math.pow(1 - prog, 3);      // ease-out
@@ -1003,8 +1060,31 @@
         c2d.beginPath();
         c2d.arc(r.x, r.y, rad, 0, Math.PI * 2);
         c2d.stroke();
+        if (high) {
+          // shimmer zone: tiny secondary sparkle ring trailing the main one
+          c2d.globalAlpha = (1 - e) * 0.35;
+          c2d.lineWidth = 1;
+          c2d.beginPath();
+          c2d.arc(r.x, r.y, rad * 1.35, 0, Math.PI * 2);
+          c2d.stroke();
+        }
       }
       c2d.lineWidth = 1;
+      for (let i = 0; i < SPARKS; i++) {
+        const s = K[i];
+        if (!s.on) continue;
+        const prog = (audioNow - s.when) / 0.5;
+        if (prog < 0) continue;
+        if (prog >= 1) { s.on = false; continue; }
+        const a = 1 - prog;
+        const len = 4 + 8 * (1 - Math.pow(1 - prog, 2));
+        c2d.globalAlpha = a;
+        c2d.strokeStyle = PALETTE.text;
+        c2d.beginPath();
+        c2d.moveTo(s.x - len, s.y); c2d.lineTo(s.x + len, s.y);
+        c2d.moveTo(s.x, s.y - len); c2d.lineTo(s.x, s.y + len);
+        c2d.stroke();
+      }
       for (let i = 0; i < PETALS; i++) {
         const p = P[i];
         if (!p.on) continue;
@@ -1020,14 +1100,109 @@
       c2d.globalAlpha = 1;
     }
 
-    return { ripple, scatter, draw };
+    return { ripple, scatter, sparkle, draw };
   }
 
   // ===== Radial =====
   // (Pixel — build round 8)
 
   // ===== Dock =====
-  // (Pixel — build round 6)
+  // Real controls wired to the engine, plus the tide rail (accessible tide).
+  function createDock(ui, engine) {
+    const $ = (id) => document.getElementById(id);
+    const play = $('play'), brush = $('brush'), root = $('root'), mode = $('mode');
+    const dock = $('dock'), toggle = $('dock-toggle'), rail = $('tide-rail');
+
+    // --- root / mode selects ---
+    const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    NOTES.forEach((n, i) => root.add(new Option(n, i)));
+    [['ionian', 'ionian (major)'], ['dorian', 'dorian'], ['mixolydian', 'mixolydian'],
+     ['aeolian', 'aeolian (minor)'], ['majPent', 'major penta'], ['minPent', 'minor penta']]
+      .forEach(([v, l]) => mode.add(new Option(l, v)));
+    root.addEventListener('change', () => {
+      ui.music.root = +root.value; engine.setRoot(+root.value);
+    });
+    mode.addEventListener('change', () => {
+      ui.music.mode = mode.value; engine.setMode(mode.value);
+    });
+
+    // --- play / pause ---
+    let playing = true;
+    play.addEventListener('click', () => {
+      playing = !playing;
+      if (playing) engine.start(); else engine.stop();
+      play.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+      play.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+      play.setAttribute('aria-pressed', String(playing));
+    });
+
+    // --- voice brush cycle ---
+    const VOICES = ['bloom', 'drift', 'pulse'];
+    function setBrush(v) {
+      ui.brush = v;
+      brush.innerHTML = '<span class="swatch" style="background:' +
+        PALETTE[v] + '"></span>' + v;
+      brush.setAttribute('aria-label', 'Seed voice: ' + v);
+    }
+    brush.addEventListener('click', () => {
+      setBrush(VOICES[(VOICES.indexOf(ui.brush) + 1) % VOICES.length]);
+    });
+    setBrush(ui.brush);
+
+    // --- ranges with data-fmt labels ---
+    function wireRange(id, apply) {
+      const el = $(id);
+      const out = el.parentElement.querySelector('output');
+      const fmt = el.getAttribute('data-fmt') || '';
+      const update = () => {
+        out.textContent = el.value + (fmt === '%' ? '%' : ' ' + fmt);
+        apply(+el.value);
+      };
+      el.addEventListener('input', update);
+      update();
+      return el;
+    }
+    wireRange('tempo', (v) => { engine.setTempo(v); ui.barSec = (16 * 15) / v; });
+    wireRange('swing', (v) => engine.setSwing(v / 100));
+    wireRange('mutation', (v) => engine.setMutation(v / 100));
+
+    // --- collapse chevron ---
+    toggle.addEventListener('click', () => {
+      const collapsed = dock.classList.toggle('collapsed');
+      toggle.innerHTML = collapsed ? '&#9652;' : '&#9662;';
+      toggle.setAttribute('aria-label', collapsed ? 'Expand controls' : 'Collapse controls');
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+
+    // --- tide rail: draggable + keyboard slider ---
+    const fill = rail.querySelector('.fill');
+    function showTide(v) {
+      fill.style.height = Math.round(v * 100) + '%';
+      rail.setAttribute('aria-valuenow', String(Math.round(v * 100)));
+    }
+    function railTideFromEvent(e) {
+      const r = rail.getBoundingClientRect();
+      ui.setTide(1 - (e.clientY - r.top) / r.height);
+    }
+    let railDrag = false;
+    rail.addEventListener('pointerdown', (e) => {
+      railDrag = true; rail.setPointerCapture(e.pointerId); railTideFromEvent(e);
+    });
+    rail.addEventListener('pointermove', (e) => { if (railDrag) railTideFromEvent(e); });
+    rail.addEventListener('pointerup', () => { railDrag = false; });
+    rail.addEventListener('pointercancel', () => { railDrag = false; });
+    rail.addEventListener('keydown', (e) => {
+      const step = e.shiftKey ? 0.15 : 0.05;
+      if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
+        ui.setTide(ui.tide + step); e.preventDefault();
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
+        ui.setTide(ui.tide - step); e.preventDefault();
+      }
+    });
+    showTide(ui.tide);
+
+    return { showTide };
+  }
 
   // ===== Cursor =====
   // (Pixel — build round 8)
@@ -1042,11 +1217,23 @@
     // Preview-pluck gate state (per active drag).
     const pluckGate = { lastT: 0, lastMidi: -1 };
 
+    // UI-side scale intervals (mirror of engine tables) — lets the UI invert
+    // midi -> lattice y without reaching into engine internals.
+    const UI_SCALES = {
+      ionian: [0, 2, 4, 5, 7, 9, 11], dorian: [0, 2, 3, 5, 7, 9, 10],
+      mixolydian: [0, 2, 4, 5, 7, 9, 10], aeolian: [0, 2, 3, 5, 7, 8, 10],
+      majPent: [0, 2, 4, 7, 9], minPent: [0, 3, 5, 7, 10]
+    };
+
     const ui = {
       sprites: new Map(),   // engineId -> {x, y, voice, muted, k}
-      brush: 'bloom',       // cycled by dock (round 6)
+      brush: 'bloom',       // cycled by dock
+      music: { root: 0, mode: 'ionian' },  // dock-owned copy for band math
       dragging: false,
       barIdx: 0,            // tracked from onBeat, drives chord bands
+      tide: 0.5,
+      tideZone: 'mid',      // from onTideZone — drives visual grammar
+      barSec: 2.4,          // bar duration at current tempo (dock keeps fresh)
       fx: null,             // set below
       now() { return engine ? engine.now() : 0; },
       setDragging(b) {
@@ -1055,25 +1242,38 @@
       },
       veilUp() { return veil && !veil.hidden; },
 
+      setTide(v) {
+        ui.tide = Math.min(1, Math.max(0, v));
+        engine.setTide(ui.tide);
+        if (ui.dock) ui.dock.showTide(ui.tide);
+      },
+      nudgeTide(d) { ui.setTide(ui.tide + d); },
+
       // y positions (px) of chord-tone pitch bands for the shimmer.
+      // Inverse lattice map: y = 1 - latticeIdx/(span-1).
       chordBandYs(H) {
-        const d = engine._debug;
-        const sc = d.Theory.scale(d.state.mode);
+        const sc = UI_SCALES[ui.music.mode] || UI_SCALES.ionian;
         const span = sc.length * 3;
         const ys = [];
-        for (let idx = 0; idx < span; idx++) {
-          const yn = 1 - idx / (span - 1);
-          const midi = d.Theory.yToMidi(yn, d.state.root, d.state.mode);
-          if (d.Theory.isChordTone(midi, d.state.root, d.state.mode, ui.barIdx)) {
-            ys.push(yn * H);
-          }
+        const midis = engine.chordBandMidis(ui.barIdx);
+        for (let i = 0; i < midis.length; i++) {
+          const rel = midis[i] - 48 - ui.music.root;
+          if (rel < 0) continue;
+          const oct = Math.floor(rel / 12);
+          const k = sc.indexOf(rel - oct * 12);
+          if (k < 0) continue;
+          const idx = oct * sc.length + k;
+          if (idx >= span) continue;
+          ys.push((1 - idx / (span - 1)) * H);
         }
         return ys;
       },
 
+      // Pitch band (lattice index) at normalized y — preview-pluck gating.
       _midiAt(ny) {
-        const d = engine._debug;
-        return d.Theory.yToMidi(ny, d.state.root, d.state.mode);
+        const sc = UI_SCALES[ui.music.mode] || UI_SCALES.ionian;
+        const span = sc.length * 3;
+        return Math.round((1 - ny) * (span - 1));
       },
 
       plantAt(x, y) {
@@ -1137,9 +1337,17 @@
       },
       onBeat(barIdx) {
         ui.barIdx = barIdx; // keeps shimmer bands on the current chord
+      },
+      onTideZone(zone) {
+        ui.tideZone = zone; // renderer + FX pick this up next frame
+      },
+      onMutate(seedId, change) {
+        const s = ui.sprites.get(seedId);
+        if (s) fx.sparkle(s.x, s.y, change.when);
       }
     });
     createInput(canvas, ui);
+    ui.dock = createDock(ui, engine);
     renderer.start();
 
     // expose for build-time debugging

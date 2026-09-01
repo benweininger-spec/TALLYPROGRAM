@@ -18,11 +18,38 @@
   #start-veil p{opacity:.7;margin:0;}
   #start-veil[hidden]{display:none;}
   #dock{position:fixed;left:0;right:0;bottom:0;height:48px;z-index:40;
-    background:rgba(5,10,20,.7);backdrop-filter:blur(8px);}
+    background:rgba(5,10,20,.7);backdrop-filter:blur(8px);
+    display:flex;align-items:center;gap:14px;padding:0 44px 0 12px;
+    transition:transform .25s ease;overflow-x:auto;overflow-y:hidden;}
+  #dock.collapsed{transform:translateY(calc(100% - 12px));}
+  #dock .ctl{display:flex;align-items:center;gap:6px;flex:none;
+    font-size:13px;font-weight:600;letter-spacing:.04em;
+    font-variant-numeric:tabular-nums;}
+  #dock label{opacity:.65;font-size:11px;text-transform:uppercase;}
+  #dock button{background:none;border:1px solid rgba(201,214,232,.3);color:var(--text);
+    border-radius:8px;height:32px;min-width:32px;padding:0 10px;cursor:pointer;
+    font:inherit;font-size:13px;font-weight:600;letter-spacing:.04em;}
+  #dock button:hover{border-color:rgba(201,214,232,.7);}
+  #dock button:focus-visible,#dock select:focus-visible,#dock input:focus-visible,
+  #tide-rail:focus-visible{outline:2px solid var(--drift);outline-offset:2px;}
+  #dock select{background:rgba(201,214,232,.08);color:var(--text);
+    border:1px solid rgba(201,214,232,.3);border-radius:6px;height:28px;font:inherit;font-size:13px;}
+  #dock input[type=range]{width:76px;accent-color:var(--drift);}
+  #dock output{min-width:52px;opacity:.85;}
+  #brush .swatch{display:inline-block;width:10px;height:10px;border-radius:50%;
+    margin-right:6px;vertical-align:-1px;}
+  #dock-toggle{position:fixed;right:6px;bottom:8px;z-index:41;width:32px;height:32px;
+    background:rgba(5,10,20,.7);border:1px solid rgba(201,214,232,.3);
+    border-radius:8px;color:var(--text);cursor:pointer;font-size:12px;}
   #radial{position:fixed;z-index:45;pointer-events:none;}
   #toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:46;
     pointer-events:none;}
-  #tide-rail{position:fixed;right:8px;top:15%;bottom:25%;width:24px;z-index:40;}
+  #tide-rail{position:fixed;right:8px;top:15%;bottom:25%;width:24px;z-index:40;
+    border-radius:12px;background:rgba(201,214,232,.08);cursor:ns-resize;
+    touch-action:none;}
+  #tide-rail .fill{position:absolute;left:3px;right:3px;bottom:3px;border-radius:9px;
+    background:linear-gradient(to top,var(--drift),rgba(63,191,176,.35));
+    pointer-events:none;}
 </style>
 </head>
 <body>
@@ -33,16 +60,32 @@
   <p>tap anywhere to begin</p>
 </div>
 
-<!--
-  Dock is intentionally empty: Pixel owns its contents (build round 6).
-  Agreed child control ids:
-    #play #brush #root #mode #tempo #swing #mutation #share
--->
-<nav id="dock" aria-label="Garden controls"></nav>
+<nav id="dock" aria-label="Garden controls">
+  <span class="ctl"><button id="play" aria-label="Pause" aria-pressed="true">&#10074;&#10074;</button></span>
+  <span class="ctl"><button id="brush" aria-label="Seed voice: bloom"><span class="swatch" style="background:var(--bloom)"></span>bloom</button></span>
+  <span class="ctl"><label for="root">root</label>
+    <select id="root" aria-label="Root note"></select></span>
+  <span class="ctl"><label for="mode">mode</label>
+    <select id="mode" aria-label="Scale mode"></select></span>
+  <span class="ctl"><label for="tempo">tempo</label>
+    <input id="tempo" type="range" min="60" max="140" step="1" value="100"
+      data-fmt="bpm" aria-label="Tempo"><output for="tempo"></output></span>
+  <span class="ctl"><label for="swing">swing</label>
+    <input id="swing" type="range" min="0" max="60" step="1" value="0"
+      data-fmt="%" aria-label="Swing"><output for="swing"></output></span>
+  <span class="ctl"><label for="mutation">mutate</label>
+    <input id="mutation" type="range" min="0" max="100" step="1" value="0"
+      data-fmt="%" aria-label="Mutation amount"><output for="mutation"></output></span>
+  <span class="ctl"><button id="share" aria-label="Copy share link" disabled>share</button></span>
+</nav>
+<button id="dock-toggle" aria-label="Collapse controls" aria-expanded="true">&#9662;</button>
 
 <div id="radial" hidden></div>
 <div id="toast" aria-live="polite"></div>
-<div id="tide-rail" hidden></div>
+<div id="tide-rail" role="slider" tabindex="0" aria-label="Tide level"
+  aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-orientation="vertical">
+  <div class="fill"></div>
+</div>
 
 <script src="tidegarden.js"></script>
 </body>
