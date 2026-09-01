@@ -415,13 +415,195 @@
   };
 
   // ===== Input =====
-  // (Pixel — build round 2)
+  // Pointer state machine: IDLE -> PRESSED -> (DRAG | RADIAL | TAP/DTAP).
+  // Single primary pointer for now; a second pointer safely resets (2-finger
+  // tide gesture lands in round 6). RADIAL is a logging stub until round 8.
+  function createInput(canvas, ui) {
+    const S = { mode: 'idle', pid: null, sx: 0, sy: 0, st: 0,
+                x: 0, y: 0, px: 0, py: 0, pt: 0, vx: 0, vy: 0,
+                seedId: null, holdTimer: null,
+                tapSeedId: null, tapTimer: null };
+
+    function reset() {
+      if (S.holdTimer) { clearTimeout(S.holdTimer); S.holdTimer = null; }
+      S.mode = 'idle'; S.pid = null; S.seedId = null;
+      ui.setDragging(false);
+    }
+
+    function pos(e) {
+      const r = canvas.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    }
+
+    function hitSeed(x, y) {
+      let best = null, bestD = CONST.HIT_RADIUS;
+      ui.sprites.forEach((s, id) => {
+        const d = Math.hypot(s.x - x, s.y - y);
+        if (d <= bestD) { bestD = d; best = id; }
+      });
+      return best;
+    }
+
+    function down(e) {
+      if (S.mode !== 'idle') { reset(); return; } // 2nd pointer: safe reset
+      const p = pos(e);
+      S.mode = 'pressed'; S.pid = e.pointerId;
+      S.sx = S.px = S.x = p.x; S.sy = S.py = S.y = p.y;
+      S.st = S.pt = performance.now();
+      S.vx = S.vy = 0;
+      S.seedId = hitSeed(p.x, p.y);
+      canvas.setPointerCapture(e.pointerId);
+      if (S.seedId) {
+        S.holdTimer = setTimeout(() => {
+          if (S.mode === 'pressed') {
+            S.mode = 'radial';
+            // RADIAL stub — full radial menu is build round 8
+            console.log('[radial stub] hold on seed', S.seedId);
+          }
+        }, CONST.HOLD_MS);
+      }
+    }
+
+    function move(e) {
+      if (e.pointerId !== S.pid || S.mode === 'idle') return;
+      const p = pos(e);
+      const now = performance.now();
+      const dt = Math.max(1, now - S.pt);
+      S.vx = (p.x - S.px) / dt * 1000; S.vy = (p.y - S.py) / dt * 1000;
+      S.px = S.x; S.py = S.y; S.pt = now;
+      S.x = p.x; S.y = p.y;
+
+      if (S.mode === 'pressed' &&
+          Math.hypot(p.x - S.sx, p.y - S.sy) > CONST.DRAG_THRESH) {
+        if (S.holdTimer) { clearTimeout(S.holdTimer); S.holdTimer = null; }
+        S.mode = 'drag';
+        if (S.seedId) ui.setDragging(true);
+      }
+      if (S.mode === 'drag' && S.seedId) ui.moveSeed(S.seedId, p.x, p.y);
+      if (S.mode === 'radial') {
+        // round 8: distance = density, angle = probability
+      }
+    }
+
+    function up(e) {
+      if (e.pointerId !== S.pid || S.mode === 'idle') return;
+      const now = performance.now();
+      const speed = Math.hypot(S.vx, S.vy);
+
+      if (S.mode === 'drag' && S.seedId && speed > CONST.FLING) {
+        ui.uprootSeed(S.seedId);                       // fling = uproot
+      } else if (S.mode === 'pressed' && now - S.st < CONST.DTAP_MS) {
+        if (!S.seedId) {
+          ui.plantAt(S.x, S.y);                        // planting never lags
+        } else if (S.tapSeedId === S.seedId && S.tapTimer) {
+          clearTimeout(S.tapTimer); S.tapTimer = null; S.tapSeedId = null;
+          ui.toggleMute(S.seedId);                     // double-tap = mute
+        } else {
+          if (S.tapTimer) clearTimeout(S.tapTimer);
+          S.tapSeedId = S.seedId;
+          S.tapTimer = setTimeout(() => {
+            S.tapTimer = null; S.tapSeedId = null;     // single tap = select
+          }, CONST.DTAP_MS);
+        }
+      }
+      reset();
+    }
+
+    canvas.addEventListener('pointerdown', down);
+    canvas.addEventListener('pointermove', move);
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', reset);
+    window.addEventListener('blur', reset);
+
+    return { state: S, reset };
+  }
 
   // ===== Renderer =====
-  // (Pixel — build round 2)
+  // rAF loop, DPR-scaled canvas, tide gradient, breathing rings (6s cycle),
+  // fixed draw order. Skips frames when tab hidden or veil is up.
+  function createRenderer(canvas, ui) {
+    const c2d = canvas.getContext('2d');
+    let W = 0, H = 0, dpr = 1;
+    let running = false;
+    let lastStepFlash = { t: -1, idx: 0 };
+
+    function resize() {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      W = window.innerWidth; H = window.innerHeight;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      c2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function drawBackground() {
+      const g = c2d.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, PALETTE.bgHigh);
+      g.addColorStop(1, PALETTE.bg);
+      c2d.fillStyle = g;
+      c2d.fillRect(0, 0, W, H);
+    }
+
+    // Concentric tide rings breathing on a 6s cycle (reverb-depth hint).
+    function drawRings(tSec) {
+      const cx = W / 2, cy = H / 2;
+      const maxR = Math.hypot(cx, cy);
+      const breathe = 0.5 + 0.5 * Math.sin(tSec * Math.PI * 2 / 6); // 6s
+      c2d.strokeStyle = PALETTE.text;
+      for (let i = 1; i <= 5; i++) {
+        const r = (i / 5) * maxR * (0.96 + 0.04 * breathe);
+        c2d.globalAlpha = 0.035 + 0.03 * breathe * (1 - i / 6);
+        c2d.beginPath();
+        c2d.arc(cx, cy, r, 0, Math.PI * 2);
+        c2d.stroke();
+      }
+      c2d.globalAlpha = 1;
+    }
+
+    function drawSeeds(tSec) {
+      ui.sprites.forEach((s) => {
+        const col = PALETTE[s.voice] || PALETTE.bloom;
+        c2d.globalAlpha = s.muted ? 0.3 : 1;
+        // soft halo
+        c2d.fillStyle = col;
+        c2d.beginPath();
+        c2d.arc(s.x, s.y, 14, 0, Math.PI * 2);
+        c2d.globalAlpha *= 0.18;
+        c2d.fill();
+        // core dot with a gentle step pulse
+        const pulse = (tSec - lastStepFlash.t) < 0.15 ? 1.5 : 0;
+        c2d.globalAlpha = s.muted ? 0.35 : 1;
+        c2d.beginPath();
+        c2d.arc(s.x, s.y, 6 + pulse, 0, Math.PI * 2);
+        c2d.fill();
+      });
+      c2d.globalAlpha = 1;
+    }
+
+    function frame() {
+      if (!running) return;
+      if (!document.hidden && !ui.veilUp()) {
+        const tSec = performance.now() / 1000;
+        drawBackground();          // 1. tide gradient
+        drawRings(tSec);           // 2. breathing rings
+        // 3. chord-band shimmer (round 4, drag only)
+        drawSeeds(tSec);           // 4. seeds
+        // 5. ripples/sparkles from FX ring buffer (round 4)
+        // 6. keyboard cursor (round 8)
+      }
+      requestAnimationFrame(frame);
+    }
+
+    return {
+      start() { if (!running) { running = true; requestAnimationFrame(frame); } },
+      stepFlash(idx) { lastStepFlash = { t: performance.now() / 1000, idx }; },
+      get size() { return { W, H }; }
+    };
+  }
 
   // ===== FX =====
-  // (Pixel — build round 4)
+  // (Pixel — build round 4: pooled ripples at `when`, chord-band shimmer)
 
   // ===== Radial =====
   // (Pixel — build round 8)
@@ -433,6 +615,60 @@
   // (Pixel — build round 8)
 
   // ===== boot =====
-  // (Pixel — build round 2: instantiate TideGarden.create({...}) and wire UI)
+  (function boot() {
+    const canvas = document.getElementById('water');
+    const veil = document.getElementById('start-veil');
+    if (!canvas) return;
+
+    // UI-side sprite registry + shared helpers for Input/Renderer.
+    const ui = {
+      sprites: new Map(),   // engineId -> {x, y, voice, muted}
+      brush: 'bloom',       // cycled by dock (round 6)
+      dragging: false,
+      setDragging(b) { ui.dragging = b; },
+      veilUp() { return veil && !veil.hidden; },
+      plantAt(x, y) {
+        const ny = y / window.innerHeight; // normalized for engine
+        const id = engine.plant({ x: x / window.innerWidth, y: ny, voice: ui.brush });
+        if (id === null) {
+          // garden full — polite ripple + pulse lands in round 8 (needs toast)
+          console.log('[garden full]');
+          return;
+        }
+        ui.sprites.set(id, { x, y, voice: ui.brush, muted: false });
+      },
+      moveSeed(id, x, y) {
+        const s = ui.sprites.get(id);
+        if (!s) return;
+        s.x = x; s.y = y;
+        engine.move(id, x / window.innerWidth, y / window.innerHeight);
+      },
+      toggleMute(id) {
+        const s = ui.sprites.get(id);
+        if (!s) return;
+        s.muted = !s.muted;
+        engine.mute(id, s.muted);
+      },
+      uprootSeed(id) {
+        engine.remove(id);
+        ui.sprites.delete(id); // petal-scatter FX lands in round 4
+      }
+    };
+
+    const renderer = createRenderer(canvas, ui);
+    const engine = window.TideGarden.create({
+      onStep(stepIdx, notes) {
+        renderer.stepFlash(stepIdx);
+        // round 4: push notes (with `when`) into FX ring buffer
+        void notes;
+      },
+      onBeat(_barIdx) { /* round 6: tide-zone visual grammar hooks */ }
+    });
+    createInput(canvas, ui);
+    renderer.start();
+
+    // expose for build-time debugging
+    window._tg = { engine, ui };
+  })();
 
 })();
