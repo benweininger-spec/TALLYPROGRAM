@@ -190,35 +190,167 @@
   }
 
   // ===== Voices =====
-  // Round 3 delivers full Bloom/Drift/Pulse recipes. Round 1 ships the shared
-  // note-routing helper plus a TEMP test tick so scheduler timing is audible.
+  // Bloom (pluck), Drift (pad), Pulse (kick below MIDI 60, hat at/above).
+  // playNote schedules one note; active-note tracking enables Drift-first
+  // voice stealing at the 12-voice polyphony cap.
   function createVoices(ctx, bus) {
+    const active = []; // {voice, gains:[GainNode], startedAt, endTime, nodes:[]}
 
-    // route a voice output: dry into bus.input, send into bus.reverbIn
-    function route(node, reverbSend) {
+    function prune() {
+      const now = ctx.currentTime;
+      for (let i = active.length - 1; i >= 0; i--) {
+        if (active[i].endTime <= now) active.splice(i, 1);
+      }
+    }
+
+    // Steal to stay under MAX_POLY: oldest Drift first, then oldest Bloom.
+    // Pulse is never stolen (priority Pulse > Bloom > Drift).
+    function stealIfNeeded(when) {
+      prune();
+      if (active.length < CONST.MAX_POLY) return;
+      for (const family of ['drift', 'bloom']) {
+        const victims = active.filter(n => n.voice === family)
+                              .sort((a, b) => a.startedAt - b.startedAt);
+        if (victims.length) {
+          const v = victims[0];
+          // fast fade instead of hard cut
+          v.gains.forEach(g => {
+            g.gain.cancelScheduledValues(when);
+            g.gain.setValueAtTime(g.gain.value || 0.001, when);
+            g.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
+          });
+          v.endTime = when + 0.06;
+          active.splice(active.indexOf(v), 1);
+          return;
+        }
+      }
+      // only pulses active: allow the overage (pulses are short)
+    }
+
+    // Shared output chain: node -> pan -> {dry -> bus.input, send -> bus.reverbIn}
+    function route(node, pan, reverbSend) {
+      let out = node;
+      if (ctx.createStereoPanner) {
+        const p = ctx.createStereoPanner();
+        p.pan.value = Math.max(-1, Math.min(1, pan));
+        node.connect(p); out = p;
+      }
       const dry = ctx.createGain(); dry.gain.value = 1;
       const send = ctx.createGain(); send.gain.value = reverbSend;
-      node.connect(dry); dry.connect(bus.input);
-      node.connect(send); send.connect(bus.reverbIn);
-      return { dry, send };
+      out.connect(dry); dry.connect(bus.input);
+      out.connect(send); send.connect(bus.reverbIn);
+      return [dry, send];
     }
 
-    // TEMP: audible test tick to verify scheduler timing. Remove in round 3.
-    function testTick(when, accent) {
+    function cleanup(nodes, oscOrSrc) {
+      oscOrSrc.onended = () => nodes.forEach(n => { try { n.disconnect(); } catch (e) {} });
+    }
+
+    // --- Bloom: triangle -> amp env (a 3ms, exp decay 0.35s)
+    //            -> lowpass env-follow 4kHz -> 1.2kHz, Q1
+    function bloom(midi, vel, when, pan, send) {
       const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = Theory.midiToFreq(midi);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.Q.value = 1;
+      lp.frequency.setValueAtTime(4000, when);
+      lp.frequency.exponentialRampToValueAtTime(1200, when + 0.35);
       const g = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = accent ? 1200 : 800;
-      g.gain.setValueAtTime(accent ? 0.25 : 0.12, when);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.04);
-      osc.connect(g);
-      route(g, 0.15);
-      osc.start(when);
-      osc.stop(when + 0.06);
-      osc.onended = () => { osc.disconnect(); g.disconnect(); };
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.linearRampToValueAtTime(0.5 * vel, when + 0.003);
+      g.gain.exponentialRampToValueAtTime(0.001, when + 0.35);
+      osc.connect(lp); lp.connect(g);
+      const outs = route(g, pan, send);
+      osc.start(when); osc.stop(when + 0.4);
+      cleanup([osc, lp, g, ...outs], osc);
+      return { gains: [g], nodes: [osc, lp, g], end: when + 0.4 };
     }
 
-    return { route, testTick };
+    // --- Drift: 2 saws ±7 cents -> lowpass (600Hz + tide*2k via bus tide is
+    //            global; here 900Hz Q0.8 + slow LFO ±200Hz) -> env
+    //            attack 0.4s, sustain = 4 step lengths, release 1.2s
+    function drift(midi, vel, when, pan, send, stepDur) {
+      const f = Theory.midiToFreq(midi);
+      const o1 = ctx.createOscillator(); o1.type = 'sawtooth';
+      const o2 = ctx.createOscillator(); o2.type = 'sawtooth';
+      o1.frequency.value = f; o1.detune.value = 7;
+      o2.frequency.value = f; o2.detune.value = -7;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = 0.8;
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.15;
+      const lfoG = ctx.createGain(); lfoG.gain.value = 200;
+      lfo.connect(lfoG); lfoG.connect(lp.frequency);
+      const g = ctx.createGain();
+      const sus = stepDur * 4;
+      const lvl = 0.16 * vel;
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.linearRampToValueAtTime(lvl, when + 0.4);
+      g.gain.setValueAtTime(lvl, when + Math.max(0.4, sus));
+      g.gain.exponentialRampToValueAtTime(0.001, when + Math.max(0.4, sus) + 1.2);
+      const end = when + Math.max(0.4, sus) + 1.25;
+      o1.connect(lp); o2.connect(lp); lp.connect(g);
+      const outs = route(g, pan, send);
+      o1.start(when); o2.start(when); lfo.start(when);
+      o1.stop(end); o2.stop(end); lfo.stop(end);
+      cleanup([o1, o2, lfo, lfoG, lp, g, ...outs], o1);
+      return { gains: [g], nodes: [o1, o2, lfo, lp, g], end };
+    }
+
+    // --- Pulse kick: sine 150 -> 50Hz exp drop over 0.08s, gain decay 0.25s
+    function kick(vel, when, pan, send) {
+      const osc = ctx.createOscillator(); osc.type = 'sine';
+      osc.frequency.setValueAtTime(150, when);
+      osc.frequency.exponentialRampToValueAtTime(50, when + 0.08);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.8 * vel, when);
+      g.gain.exponentialRampToValueAtTime(0.001, when + 0.25);
+      osc.connect(g);
+      const outs = route(g, pan * 0.3, send * 0.5); // kicks stay centered/dry-ish
+      osc.start(when); osc.stop(when + 0.3);
+      cleanup([osc, g, ...outs], osc);
+      return { gains: [g], nodes: [osc, g], end: when + 0.3 };
+    }
+
+    // --- Pulse hat: white noise -> highpass 7kHz -> decay 0.05s
+    let noiseBuf = null;
+    function getNoise() {
+      if (!noiseBuf) {
+        noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.1, ctx.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      }
+      return noiseBuf;
+    }
+    function hat(vel, when, pan, send, decay) {
+      const src = ctx.createBufferSource();
+      src.buffer = getNoise();
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 7000;
+      const g = ctx.createGain();
+      const dec = decay || 0.05;
+      g.gain.setValueAtTime(0.3 * vel, when);
+      g.gain.exponentialRampToValueAtTime(0.001, when + dec);
+      src.connect(hp); hp.connect(g);
+      const outs = route(g, pan, send);
+      src.start(when); src.stop(when + dec + 0.02);
+      cleanup([src, hp, g, ...outs], src);
+      return { gains: [g], nodes: [src, hp, g], end: when + dec + 0.02 };
+    }
+
+    // Schedule one note. note: {voice, midi, velocity, when, pan, reverbSend, stepDur}
+    function playNote(n) {
+      stealIfNeeded(n.when);
+      let v;
+      if (n.voice === 'drift') v = drift(n.midi, n.velocity, n.when, n.pan, n.reverbSend, n.stepDur);
+      else if (n.voice === 'pulse') {
+        v = n.midi < 60 ? kick(n.velocity, n.when, n.pan, n.reverbSend)
+                        : hat(n.velocity, n.when, n.pan, n.reverbSend);
+      } else v = bloom(n.midi, n.velocity, n.when, n.pan, n.reverbSend);
+      active.push({ voice: n.voice, gains: v.gains, startedAt: n.when, endTime: v.end });
+    }
+
+    return { playNote, activeCount: () => { prune(); return active.length; } };
   }
 
   // ===== Scheduler =====
@@ -277,15 +409,57 @@
   }
 
   // ===== Garden =====
-  // Round 3 delivers the full seed model. Round 1 ships id plumbing + storage
-  // so plant/move stubs return real opaque ids Pixel can hold onto.
+  // Seed model + per-step resolution. Normalized 0–1 coords:
+  //   x -> euclid rotation floor(x*16) and stereo pan (-1..1)
+  //   y -> pitch (scale lattice, snapped per beat)
+  //   distance from center (0.5,0.5) -> reverb send 0.1–0.6
   function createGarden() {
     let nextId = 1;
     const seeds = new Map(); // id -> {x,y,voice,k,probability,muted}
 
     function makeId() { return 's' + (nextId++).toString(36) + Math.random().toString(36).slice(2, 6); }
 
-    return { seeds, makeId };
+    function reverbSend(x, y) {
+      // max distance from center is ~0.707; normalize to 0..1
+      const d = Math.min(1, Math.hypot(x - 0.5, y - 0.5) / 0.707);
+      return 0.1 + d * 0.5;
+    }
+
+    function pan(x) { return Math.max(-1, Math.min(1, (x - 0.5) * 2)); }
+
+    // Resolve which seeds fire on this step. Returns note payloads
+    // {seedId, voice, midi, velocity, chordTone, strongBeat, when} plus
+    // internal fields (pan, reverbSend, stepDur) for the voice layer.
+    function resolveStep(stepIdx, barIdx, when, stepDur, musState) {
+      const { root, mode } = musState;
+      const candidates = [];
+      seeds.forEach((s, id) => {
+        if (s.muted) return;
+        const rot = Math.floor(s.x * CONST.STEPS) % CONST.STEPS;
+        if (!Theory.euclid(s.k, CONST.STEPS, rot)[stepIdx]) return;
+        if (Math.random() > s.probability) return;
+        const raw = Theory.yToMidi(s.y, root, mode);
+        const midi = Theory.snap(raw, root, mode, barIdx, stepIdx);
+        const velocity = Theory.velocity(midi, root, mode, barIdx, stepIdx);
+        candidates.push({
+          seedId: id, voice: s.voice, midi, velocity,
+          chordTone: Theory.isChordTone(midi, root, mode, barIdx),
+          strongBeat: Theory.isStrongStep(stepIdx),
+          when,
+          pan: pan(s.x), reverbSend: reverbSend(s.x, s.y), stepDur
+        });
+      });
+      // Per-step onset cap: probability-weighted culling — keep the most
+      // salient (velocity, jittered so ties don't always cull the same seed).
+      if (candidates.length > CONST.STEP_ONSETS) {
+        candidates.sort((a, b) =>
+          (b.velocity + Math.random() * 0.1) - (a.velocity + Math.random() * 0.1));
+        candidates.length = CONST.STEP_ONSETS;
+      }
+      return candidates;
+    }
+
+    return { seeds, makeId, resolveStep, reverbSend, pan };
   }
 
   // ===== Store =====
@@ -331,10 +505,15 @@
         scheduler = createScheduler(ctx, {
           onStep: (i, notes) => { if (cb.onStep) cb.onStep(i, notes); },
           onBeat: (bar) => { if (cb.onBeat) cb.onBeat(bar); },
-          resolveStep: (stepIdx, barIdx, when /*, dur */) => {
-            // Round 1: empty notes[]. TEMP audible tick so timing is verifiable.
-            voices.testTick(when, stepIdx === 0); // TEMP — remove in round 3
-            return [];
+          resolveStep: (stepIdx, barIdx, when, dur) => {
+            const resolved = garden.resolveStep(stepIdx, barIdx, when, dur, state);
+            resolved.forEach(n => voices.playNote(n));
+            // Callback payload: contract fields only.
+            return resolved.map(n => ({
+              seedId: n.seedId, voice: n.voice, midi: n.midi,
+              velocity: n.velocity, chordTone: n.chordTone,
+              strongBeat: n.strongBeat, when: n.when
+            }));
           }
         });
         scheduler.setTempo(state.tempo);
@@ -381,7 +560,7 @@
         setMutation(v) { state.mutation = Math.min(1, Math.max(0, v)); },
         now() { return ctx ? ctx.currentTime : 0; },
 
-        // --- garden (round-1 stubs: real opaque ids, no sound yet) ---
+        // --- garden ---
         plant(opts) {
           if (garden.seeds.size >= CONST.MAX_SEEDS) return null;
           const id = garden.makeId();
@@ -395,8 +574,14 @@
           const s = garden.seeds.get(id);
           if (s) { s.x = x; s.y = y; }
         },
-        setDensity(id, k) { const s = garden.seeds.get(id); if (s) s.k = k; },
-        setProbability(id, p) { const s = garden.seeds.get(id); if (s) s.probability = p; },
+        setDensity(id, k) {
+          const s = garden.seeds.get(id);
+          if (s) s.k = Math.min(CONST.STEPS, Math.max(1, Math.round(k)));
+        },
+        setProbability(id, p) {
+          const s = garden.seeds.get(id);
+          if (s) s.probability = Math.min(1, Math.max(0, p));
+        },
         mute(id, b) { const s = garden.seeds.get(id); if (s) s.muted = !!b; },
         remove(id) { garden.seeds.delete(id); },
         previewPluck(_id) { /* stub — round 5 */ },
