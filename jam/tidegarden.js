@@ -664,7 +664,9 @@
         S.mode = 'drag';
         if (S.seedId) ui.setDragging(true);
       }
-      if (S.mode === 'drag' && S.seedId) ui.moveSeed(S.seedId, p.x, p.y);
+      if (S.mode === 'drag' && S.seedId) {
+        ui.moveSeed(S.seedId, p.x, p.y, Math.hypot(S.vx, S.vy));
+      }
       if (S.mode === 'radial') {
         // round 8: distance = density, angle = probability
       }
@@ -677,6 +679,8 @@
 
       if (S.mode === 'drag' && S.seedId && speed > CONST.FLING) {
         ui.uprootSeed(S.seedId);                       // fling = uproot
+      } else if (S.mode === 'drag' && S.seedId) {
+        ui.endDrag(S.seedId);                          // confirming pluck
       } else if (S.mode === 'pressed' && now - S.st < CONST.DTAP_MS) {
         if (!S.seedId) {
           ui.plantAt(S.x, S.y);                        // planting never lags
@@ -746,24 +750,62 @@
       c2d.globalAlpha = 1;
     }
 
+    // Chord-band shimmer: soft horizontal bands at chord-tone pitch heights,
+    // fading in while dragging a seed and out on release.
+    let shimA = 0;
+    function drawShimmer() {
+      const target = ui.dragging ? 1 : 0;
+      shimA += (target - shimA) * 0.12;
+      if (shimA < 0.01 || !ui.chordBandYs) { if (shimA < 0.01) shimA = 0; return; }
+      const ys = ui.chordBandYs(H);
+      c2d.fillStyle = PALETTE.text;
+      for (let i = 0; i < ys.length; i++) {
+        const y = ys[i];
+        c2d.globalAlpha = 0.05 * shimA;
+        c2d.fillRect(0, y - 8, W, 16);          // soft body
+        c2d.globalAlpha = 0.12 * shimA;
+        c2d.fillRect(0, y - 1, W, 2);           // bright center line
+      }
+      c2d.globalAlpha = 1;
+    }
+
     function drawSeeds(tSec) {
       ui.sprites.forEach((s) => {
         const col = PALETTE[s.voice] || PALETTE.bloom;
-        c2d.globalAlpha = s.muted ? 0.3 : 1;
-        // soft halo
         c2d.fillStyle = col;
-        c2d.beginPath();
-        c2d.arc(s.x, s.y, 14, 0, Math.PI * 2);
-        c2d.globalAlpha *= 0.18;
-        c2d.fill();
-        // core dot with a gentle step pulse
-        const pulse = (tSec - lastStepFlash.t) < 0.15 ? 1.5 : 0;
-        c2d.globalAlpha = s.muted ? 0.35 : 1;
-        c2d.beginPath();
-        c2d.arc(s.x, s.y, 6 + pulse, 0, Math.PI * 2);
-        c2d.fill();
+        c2d.strokeStyle = col;
+        if (s.muted) {
+          // mute silhouette: dim outline only, no fill
+          c2d.globalAlpha = 0.35;
+          c2d.lineWidth = 1.5;
+          c2d.beginPath();
+          c2d.arc(s.x, s.y, 6, 0, Math.PI * 2);
+          c2d.stroke();
+        } else {
+          // soft halo
+          c2d.globalAlpha = 0.18;
+          c2d.beginPath();
+          c2d.arc(s.x, s.y, 14, 0, Math.PI * 2);
+          c2d.fill();
+          // core dot with a gentle step pulse
+          const pulse = (tSec - lastStepFlash.t) < 0.15 ? 1.5 : 0;
+          c2d.globalAlpha = 1;
+          c2d.beginPath();
+          c2d.arc(s.x, s.y, 6 + pulse, 0, Math.PI * 2);
+          c2d.fill();
+        }
+        // k-dot density ring (shown for muted seeds too, dimmer)
+        const k = s.k || 5;
+        c2d.globalAlpha = s.muted ? 0.25 : 0.75;
+        for (let i = 0; i < k; i++) {
+          const a = -Math.PI / 2 + (Math.PI * 2 * i) / k;
+          c2d.beginPath();
+          c2d.arc(s.x + Math.cos(a) * 12, s.y + Math.sin(a) * 12, 1.6, 0, Math.PI * 2);
+          c2d.fill();
+        }
       });
       c2d.globalAlpha = 1;
+      c2d.lineWidth = 1;
     }
 
     function frame() {
@@ -772,9 +814,9 @@
         const tSec = performance.now() / 1000;
         drawBackground();          // 1. tide gradient
         drawRings(tSec);           // 2. breathing rings
-        // 3. chord-band shimmer (round 4, drag only)
+        drawShimmer();             // 3. chord-band shimmer (drag only)
         drawSeeds(tSec);           // 4. seeds
-        // 5. ripples/sparkles from FX ring buffer (round 4)
+        if (ui.fx) ui.fx.draw(c2d, ui.now ? ui.now() : 0); // 5. ripples/petals
         // 6. keyboard cursor (round 8)
       }
       requestAnimationFrame(frame);
@@ -788,7 +830,77 @@
   }
 
   // ===== FX =====
-  // (Pixel — build round 4: pooled ripples at `when`, chord-band shimmer)
+  // Preallocated pools, zero allocation in the draw loop. Ripples fire at the
+  // note's audio `when` (compared against engine.now()), size ∝ velocity,
+  // brighter when chordTone, colored by voice. Petal-scatter for uproot.
+  function createFX(ui) {
+    const RIPPLES = 64, PETALS = 48;
+    const R = [];
+    for (let i = 0; i < RIPPLES; i++) {
+      R.push({ on: false, x: 0, y: 0, when: 0, vel: 0, ct: false, color: PALETTE.bloom });
+    }
+    let ri = 0;
+    const P = [];
+    for (let i = 0; i < PETALS; i++) {
+      P.push({ on: false, x: 0, y: 0, vx: 0, vy: 0, t0: 0, color: PALETTE.bloom });
+    }
+    let pi = 0;
+
+    function ripple(note) {
+      const s = ui.sprites.get(note.seedId);
+      if (!s) return;
+      const r = R[ri]; ri = (ri + 1) % RIPPLES;
+      r.on = true; r.x = s.x; r.y = s.y;
+      r.when = note.when; r.vel = note.velocity; r.ct = note.chordTone;
+      r.color = PALETTE[note.voice] || PALETTE.bloom;
+    }
+
+    function scatter(x, y, color) {
+      for (let k = 0; k < 8; k++) {
+        const p = P[pi]; pi = (pi + 1) % PETALS;
+        p.on = true; p.x = x; p.y = y;
+        const a = (Math.PI * 2 * k) / 8 + Math.random() * 0.5;
+        const sp = 60 + Math.random() * 90;
+        p.vx = Math.cos(a) * sp; p.vy = Math.sin(a) * sp;
+        p.t0 = performance.now() / 1000; p.color = color;
+      }
+    }
+
+    function draw(c2d, audioNow) {
+      const tNow = performance.now() / 1000;
+      for (let i = 0; i < RIPPLES; i++) {
+        const r = R[i];
+        if (!r.on) continue;
+        const prog = (audioNow - r.when) / 0.6;   // 600ms life
+        if (prog < 0) continue;                   // scheduled, not yet heard
+        if (prog >= 1) { r.on = false; continue; }
+        const e = 1 - Math.pow(1 - prog, 3);      // ease-out
+        const rad = 10 + e * (24 + 46 * r.vel);
+        c2d.globalAlpha = (1 - e) * (r.ct ? 0.85 : 0.45);
+        c2d.strokeStyle = r.color;
+        c2d.lineWidth = r.ct ? 2.5 : 1.5;
+        c2d.beginPath();
+        c2d.arc(r.x, r.y, rad, 0, Math.PI * 2);
+        c2d.stroke();
+      }
+      c2d.lineWidth = 1;
+      for (let i = 0; i < PETALS; i++) {
+        const p = P[i];
+        if (!p.on) continue;
+        const dt = tNow - p.t0;
+        if (dt >= 0.35) { p.on = false; continue; }
+        const f = dt / 0.35;
+        c2d.globalAlpha = 1 - f;
+        c2d.fillStyle = p.color;
+        c2d.beginPath();
+        c2d.arc(p.x + p.vx * dt, p.y + p.vy * dt, 3 * (1 - f) + 1, 0, Math.PI * 2);
+        c2d.fill();
+      }
+      c2d.globalAlpha = 1;
+    }
+
+    return { ripple, scatter, draw };
+  }
 
   // ===== Radial =====
   // (Pixel — build round 8)
@@ -805,49 +917,106 @@
     const veil = document.getElementById('start-veil');
     if (!canvas) return;
 
-    // UI-side sprite registry + shared helpers for Input/Renderer.
+    // UI-side sprite registry + shared helpers for Input/Renderer/FX.
+    // Preview-pluck gate state (per active drag).
+    const pluckGate = { lastT: 0, lastMidi: -1 };
+
     const ui = {
-      sprites: new Map(),   // engineId -> {x, y, voice, muted}
+      sprites: new Map(),   // engineId -> {x, y, voice, muted, k}
       brush: 'bloom',       // cycled by dock (round 6)
       dragging: false,
-      setDragging(b) { ui.dragging = b; },
+      barIdx: 0,            // tracked from onBeat, drives chord bands
+      fx: null,             // set below
+      now() { return engine ? engine.now() : 0; },
+      setDragging(b) {
+        ui.dragging = b;
+        if (b) { pluckGate.lastT = 0; pluckGate.lastMidi = -1; }
+      },
       veilUp() { return veil && !veil.hidden; },
+
+      // y positions (px) of chord-tone pitch bands for the shimmer.
+      chordBandYs(H) {
+        const d = engine._debug;
+        const sc = d.Theory.scale(d.state.mode);
+        const span = sc.length * 3;
+        const ys = [];
+        for (let idx = 0; idx < span; idx++) {
+          const yn = 1 - idx / (span - 1);
+          const midi = d.Theory.yToMidi(yn, d.state.root, d.state.mode);
+          if (d.Theory.isChordTone(midi, d.state.root, d.state.mode, ui.barIdx)) {
+            ys.push(yn * H);
+          }
+        }
+        return ys;
+      },
+
+      _midiAt(ny) {
+        const d = engine._debug;
+        return d.Theory.yToMidi(ny, d.state.root, d.state.mode);
+      },
+
       plantAt(x, y) {
-        const ny = y / window.innerHeight; // normalized for engine
-        const id = engine.plant({ x: x / window.innerWidth, y: ny, voice: ui.brush });
+        const id = engine.plant({
+          x: x / window.innerWidth, y: y / window.innerHeight, voice: ui.brush
+        });
         if (id === null) {
           // garden full — polite ripple + pulse lands in round 8 (needs toast)
           console.log('[garden full]');
           return;
         }
-        ui.sprites.set(id, { x, y, voice: ui.brush, muted: false });
+        ui.sprites.set(id, { x, y, voice: ui.brush, muted: false, k: 5 });
       },
-      moveSeed(id, x, y) {
+
+      // Velocity-gated preview pluck: pointer slow (<200 px/s), >=90ms since
+      // last pluck, and the pitch band actually changed.
+      moveSeed(id, x, y, speed) {
         const s = ui.sprites.get(id);
         if (!s) return;
         s.x = x; s.y = y;
-        engine.move(id, x / window.innerWidth, y / window.innerHeight);
+        const ny = y / window.innerHeight;
+        engine.move(id, x / window.innerWidth, ny);
+        const midi = ui._midiAt(ny);
+        const now = performance.now();
+        if ((speed || 0) < 200 && now - pluckGate.lastT >= 90 &&
+            midi !== pluckGate.lastMidi) {
+          pluckGate.lastT = now;
+          pluckGate.lastMidi = midi;
+          engine.previewPluck(id);   // stub until round 5 — safe no-op
+        }
       },
+
+      // Drag released without fling: one confirming pluck at final pitch.
+      endDrag(id) {
+        pluckGate.lastMidi = -1;
+        engine.previewPluck(id);
+      },
+
       toggleMute(id) {
         const s = ui.sprites.get(id);
         if (!s) return;
         s.muted = !s.muted;
         engine.mute(id, s.muted);
       },
+
       uprootSeed(id) {
+        const s = ui.sprites.get(id);
         engine.remove(id);
-        ui.sprites.delete(id); // petal-scatter FX lands in round 4
+        if (s && ui.fx) ui.fx.scatter(s.x, s.y, PALETTE[s.voice] || PALETTE.bloom);
+        ui.sprites.delete(id);
       }
     };
 
     const renderer = createRenderer(canvas, ui);
+    const fx = createFX(ui);
+    ui.fx = fx;
     const engine = window.TideGarden.create({
       onStep(stepIdx, notes) {
         renderer.stepFlash(stepIdx);
-        // round 4: push notes (with `when`) into FX ring buffer
-        void notes;
+        for (let i = 0; i < notes.length; i++) fx.ripple(notes[i]);
       },
-      onBeat(_barIdx) { /* round 6: tide-zone visual grammar hooks */ }
+      onBeat(barIdx) {
+        ui.barIdx = barIdx; // keeps shimmer bands on the current chord
+      }
     });
     createInput(canvas, ui);
     renderer.start();
