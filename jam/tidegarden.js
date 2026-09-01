@@ -68,10 +68,12 @@
     }
 
     // Map normalized y (0 top .. 1 bottom) to a midi note on the 2-octave lattice.
-    function yToMidi(y, root, mode) {
+    // degOff shifts the lattice index by whole scale degrees (mutation drift).
+    function yToMidi(y, root, mode, degOff) {
       const sc = scale(mode);
       const span = sc.length * 3; // 3 octaves of lattice indices clipped to MIDI range
-      const idx = Math.round((1 - y) * (span - 1));
+      let idx = Math.round((1 - y) * (span - 1)) + (degOff | 0);
+      idx = Math.min(span - 1, Math.max(0, idx));
       const oct = Math.floor(idx / sc.length);
       const midi = CONST.MIDI_LO + root + oct * 12 + sc[idx % sc.length];
       return Math.min(CONST.MIDI_HI, Math.max(CONST.MIDI_LO, midi));
@@ -186,7 +188,7 @@
       }
     }
 
-    return { input, reverbIn, tideFilter, comp, master, setTideFreq };
+    return { input, reverbIn, tideFilter, comp, master, wet, setTideFreq };
   }
 
   // ===== Voices =====
@@ -345,7 +347,7 @@
       if (n.voice === 'drift') v = drift(n.midi, n.velocity, n.when, n.pan, n.reverbSend, n.stepDur);
       else if (n.voice === 'pulse') {
         v = n.midi < 60 ? kick(n.velocity, n.when, n.pan, n.reverbSend)
-                        : hat(n.velocity, n.when, n.pan, n.reverbSend);
+                        : hat(n.velocity, n.when, n.pan, n.reverbSend, n.hatDecay);
       } else v = bloom(n.midi, n.velocity, n.when, n.pan, n.reverbSend);
       active.push({ voice: n.voice, gains: v.gains, startedAt: n.when, endTime: v.end });
     }
@@ -364,7 +366,9 @@
     let stepIdx = 0;          // 0..15
     let barIdx = 0;
 
-    function stepDur() { return 15 / tempo; } // 16th at bpm
+    let halfTime = false; // low-tide: doubled step duration (set on bar boundary)
+
+    function stepDur() { return (15 / tempo) * (halfTime ? 2 : 1); } // 16th at bpm
 
     function tick() {
       const horizon = ctx.currentTime + CONST.LOOKAHEAD;
@@ -403,6 +407,8 @@
       get barIdx() { return barIdx; },
       setTempo(bpm) { tempo = Math.min(140, Math.max(60, bpm)); },
       setSwing(s) { swing = Math.min(0.6, Math.max(0, s)); },
+      setHalfTime(b) { halfTime = !!b; },
+      stepDur,
       getTempo() { return tempo; },
       getSwing() { return swing; }
     };
@@ -432,21 +438,27 @@
     // internal fields (pan, reverbSend, stepDur) for the voice layer.
     function resolveStep(stepIdx, barIdx, when, stepDur, musState) {
       const { root, mode } = musState;
+      const zone = musState.tideZone || 'mid';
+      const tideVel = musState.tideVel == null ? 1 : musState.tideVel;
       const candidates = [];
       seeds.forEach((s, id) => {
         if (s.muted) return;
         const rot = Math.floor(s.x * CONST.STEPS) % CONST.STEPS;
-        if (!Theory.euclid(s.k, CONST.STEPS, rot)[stepIdx]) return;
+        // Low tide thins Pulse patterns to half density (underwater feel).
+        const k = (zone === 'low' && s.voice === 'pulse')
+          ? Math.max(1, Math.floor(s.k / 2)) : s.k;
+        if (!Theory.euclid(k, CONST.STEPS, rot)[stepIdx]) return;
         if (Math.random() > s.probability) return;
-        const raw = Theory.yToMidi(s.y, root, mode);
+        const raw = Theory.yToMidi(s.y, root, mode, s.mutOff | 0);
         const midi = Theory.snap(raw, root, mode, barIdx, stepIdx);
-        const velocity = Theory.velocity(midi, root, mode, barIdx, stepIdx);
+        const velocity = Theory.velocity(midi, root, mode, barIdx, stepIdx) * tideVel;
         candidates.push({
           seedId: id, voice: s.voice, midi, velocity,
           chordTone: Theory.isChordTone(midi, root, mode, barIdx),
           strongBeat: Theory.isStrongStep(stepIdx),
           when,
-          pan: pan(s.x), reverbSend: reverbSend(s.x, s.y), stepDur
+          pan: pan(s.x), reverbSend: reverbSend(s.x, s.y), stepDur,
+          hatDecay: (zone === 'high') ? 0.02 : undefined
         });
       });
       // Per-step onset cap: probability-weighted culling — keep the most
@@ -494,8 +506,56 @@
         tide: 0.5,
         mutation: 0,
         tempo: 100,
-        swing: 0
+        swing: 0,
+        tideZone: 'mid',   // applied zone (changes only on bar boundary)
+        tideVel: 1         // velocity scale from tide (0.6–1.0 in mid zone)
       };
+      let pendingZone = null; // zone waiting for the next bar boundary
+
+      function zoneFor(tide) {
+        if (tide < CONST.TIDE_LOW) return 'low';
+        if (tide > CONST.TIDE_HIGH) return 'high';
+        return 'mid';
+      }
+
+      // Continuous mid-zone macro: velocity 0.6–1.0 (also eases in extremes).
+      function tideVelFor(tide) {
+        const t = Math.min(1, Math.max(0,
+          (tide - CONST.TIDE_LOW) / (CONST.TIDE_HIGH - CONST.TIDE_LOW)));
+        return 0.6 + 0.4 * t;
+      }
+
+      // Apply a zone change ON a bar boundary with a one-bar crossfade.
+      function applyZone(zone, when, barDur) {
+        state.tideZone = zone;
+        scheduler.setHalfTime(zone === 'low');
+        if (zone === 'low') {
+          // filter closes, reverb rises: underwater
+          bus.tideFilter.frequency.cancelScheduledValues(when);
+          bus.tideFilter.frequency.setValueAtTime(bus.tideFilter.frequency.value, when);
+          bus.tideFilter.frequency.exponentialRampToValueAtTime(400, when + barDur);
+          bus.wet.gain.setTargetAtTime(1.2, when, barDur / 3);
+        } else {
+          bus.wet.gain.setTargetAtTime(0.8, when, barDur / 3);
+          bus.setTideFreq(state.tide, when, barDur);
+        }
+        if (cb.onTideZone) cb.onTideZone(zone);
+      }
+
+      // Per-bar mutation roll: p = mutation×0.15, pitch drifts ±1 scale degree.
+      function mutateBar(when) {
+        if (state.mutation <= 0) return;
+        const p = state.mutation * 0.15;
+        garden.seeds.forEach((s, id) => {
+          if (Math.random() >= p) return;
+          const delta = Math.random() < 0.5 ? -1 : 1;
+          const from = Theory.yToMidi(s.y, state.root, state.mode, s.mutOff | 0);
+          s.mutOff = (s.mutOff | 0) + delta;
+          const to = Theory.yToMidi(s.y, state.root, state.mode, s.mutOff);
+          if (to === from) { s.mutOff -= delta; return; } // clamped at lattice edge
+          if (cb.onMutate) cb.onMutate(id, { field: 'pitch', from, to, when });
+        });
+      }
 
       function ensureCtx() {
         if (ctx) return ctx;
@@ -506,8 +566,31 @@
           onStep: (i, notes) => { if (cb.onStep) cb.onStep(i, notes); },
           onBeat: (bar) => { if (cb.onBeat) cb.onBeat(bar); },
           resolveStep: (stepIdx, barIdx, when, dur) => {
+            if (stepIdx === 0) {
+              // Bar boundary: apply pending tide zone, roll mutations.
+              if (pendingZone && pendingZone !== state.tideZone) {
+                applyZone(pendingZone, when, dur * CONST.STEPS);
+              }
+              pendingZone = null;
+              mutateBar(when);
+            }
             const resolved = garden.resolveStep(stepIdx, barIdx, when, dur, state);
             resolved.forEach(n => voices.playNote(n));
+            // High tide shimmer: Bloom +12 octave echo (half vel, 1/16 late),
+            // hats doubled with tight 0.02s decay.
+            if (state.tideZone === 'high') {
+              resolved.forEach(n => {
+                if (n.voice === 'bloom' && n.midi + 12 <= CONST.MIDI_HI + 12) {
+                  voices.playNote(Object.assign({}, n, {
+                    midi: n.midi + 12, velocity: n.velocity * 0.5, when: n.when + dur
+                  }));
+                } else if (n.voice === 'pulse' && n.midi >= 60) {
+                  voices.playNote(Object.assign({}, n, {
+                    velocity: n.velocity * 0.7, when: n.when + dur / 2, hatDecay: 0.02
+                  }));
+                }
+              });
+            }
             // Callback payload: contract fields only.
             return resolved.map(n => ({
               seedId: n.seedId, voice: n.voice, midi: n.midi,
@@ -552,8 +635,17 @@
         setSwing(s) { state.swing = s; if (scheduler) scheduler.setSwing(s); },
         setTide(v) {
           state.tide = Math.min(1, Math.max(0, v));
-          if (bus) bus.setTideFreq(state.tide, ctx.currentTime, 0);
-          // zone transitions (half-time / shimmer) land in round 5
+          state.tideVel = tideVelFor(state.tide);
+          const zone = zoneFor(state.tide);
+          if (zone !== state.tideZone) {
+            pendingZone = zone; // applied on next bar boundary (crossfaded)
+          } else {
+            pendingZone = null;
+            // continuous mid-zone sweep tracks the finger immediately
+            if (bus && state.tideZone === 'mid') {
+              bus.setTideFreq(state.tide, ctx.currentTime, 0);
+            }
+          }
         },
         setRoot(r) { state.root = ((r % 12) + 12) % 12; },
         setMode(m) { if (Theory.SCALES[m]) state.mode = m; },
@@ -566,7 +658,7 @@
           const id = garden.makeId();
           garden.seeds.set(id, {
             x: opts.x, y: opts.y, voice: opts.voice || 'bloom',
-            k: 5, probability: 1, muted: false
+            k: 5, probability: 1, muted: false, mutOff: 0
           });
           return id;
         },
@@ -584,7 +676,36 @@
         },
         mute(id, b) { const s = garden.seeds.get(id); if (s) s.muted = !!b; },
         remove(id) { garden.seeds.delete(id); },
-        previewPluck(_id) { /* stub — round 5 */ },
+        // Audible retune preview while dragging: seed's own voice through the
+        // master bus (tide filter applies), reverb send fixed low (0.15) so
+        // drags don't wash out, velocity capped at 0.7.
+        previewPluck(id) {
+          const s = garden.seeds.get(id);
+          if (!s || !ctx || ctx.state !== 'running') return;
+          const barIdx = scheduler ? scheduler.barIdx : 0;
+          const raw = Theory.yToMidi(s.y, state.root, state.mode, s.mutOff | 0);
+          const midi = Theory.snap(raw, state.root, state.mode, barIdx, 0);
+          voices.playNote({
+            seedId: id, voice: s.voice, midi,
+            velocity: Math.min(0.7, state.tideVel),
+            when: ctx.currentTime + 0.005,
+            pan: garden.pan(s.x), reverbSend: 0.15,
+            stepDur: scheduler ? scheduler.stepDur() : 0.15
+          });
+        },
+
+        // Chord-tone midis (48–83) for a given bar under current root/mode —
+        // for the UI's shimmer bands (replaces _debug.Theory reliance).
+        chordBandMidis(barIdx) {
+          const sc = Theory.scale(state.mode);
+          const pcs = Theory.chordDegrees(state.mode, barIdx)
+            .map(d => (state.root + sc[d]) % 12);
+          const out = [];
+          for (let m = CONST.MIDI_LO; m <= CONST.MIDI_HI; m++) {
+            if (pcs.includes(m % 12)) out.push(m);
+          }
+          return out;
+        },
 
         // --- state ---
         snapshot() { return store.snapshot(); },
