@@ -60,3 +60,27 @@ forEachStore('ledgers', (ctx) => {
     assert.equal(snap.burned_cents, 3600);
   });
 });
+
+forEachStore('ledgers: money in flight', (ctx) => {
+  test('a queued buy stays in yours until it fills or is refunded', async () => {
+    let now = at('2026-10-01');
+    const broker = makeFakeBroker({ autoFill: true, clock: () => now });
+    const svc = makeService({ store: ctx.store, broker, clock: () => now });
+    await svc.ensureInitialized('America/Los_Angeles');
+    await svc.setMode('smoking');
+    await ctx.store.tx((r) => r.insertLedger({ occurred_at: now, delta_cents: 10000, kind: 'adjust' }));
+    await svc.requestTrade({ symbol: 'VTI', side: 'buy', notional_cents: 5000 });
+    const { trade } = await svc.requestTrade({ symbol: 'VOO', side: 'buy', notional_cents: 2000 });
+    let st = await svc.getState();
+    assert.equal(st.queued_cents, 7000);
+    assert.equal(st.bank_cents, 3000);
+    now = at('2026-10-02');
+    await svc.cancelTrade(trade.id);
+    now = new Date(at('2026-10-02').getTime() + 2 * 3600000);
+    await svc.processQueue();
+    now = at('2026-10-03');
+    const h = await svc.history();
+    // Oct 1: bank 3000 + 7000 in flight. Oct 2: VOO refunded, VTI filled.
+    assert.deepEqual(h.days.map((d) => d.yours_cents), [10000, 10000, 10000]);
+  });
+});
