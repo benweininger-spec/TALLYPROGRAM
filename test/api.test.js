@@ -11,7 +11,7 @@ import day from '../api/day.js';
 import mode from '../api/mode.js';
 import trade from '../api/trade/index.js';
 import cancel from '../api/trade/cancel.js';
-import cron from '../api/cron/execute-queue.js';
+import cron from '../api/cron/[job].js';
 
 const env = { ALLOWED_EMAIL: 'owner@example.com', SUPABASE_URL: 'https://x.supabase.co', SUPABASE_ANON_KEY: 'a', CRON_SECRET: 'cs' };
 const fetchImpl = async (_url, init) => {
@@ -47,8 +47,10 @@ test('every user endpoint requires the owner', async () => {
 });
 
 test('cron requires the cron secret, not a user token', async () => {
-  assert.equal((await call(cron, { token: 'good' })).statusCode, 401);
-  assert.equal((await call(cron, { token: 'cs' })).statusCode, 200);
+  assert.equal((await call(cron, { token: 'good', url: '/api/cron/execute-queue' })).statusCode, 401);
+  assert.equal((await call(cron, { token: 'cs', url: '/api/cron/execute-queue' })).statusCode, 200);
+  assert.equal((await call(cron, { token: 'cs', url: '/api/cron/snapshot' })).statusCode, 200);
+  assert.equal((await call(cron, { token: 'cs', url: '/api/cron/nope' })).statusCode, 404);
 });
 
 test('rule violations come back as 400 with a code', async () => {
