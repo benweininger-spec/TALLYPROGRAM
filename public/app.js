@@ -8,6 +8,7 @@ const S = {
   config: null,
   supabase: null,
   token: null,
+  demo: false, // showing the sample reader to a visitor who is not signed in
   state: null,
   history: null,
   tab: 'now',
@@ -124,7 +125,19 @@ function watchLayout() {
 }
 
 // ---------- server ----------
+const DEMO_NO = 'Demo edition. Sign in to make changes.';
+function demoPath(path) {
+  const [base, qs = ''] = path.split('?');
+  const view = { '/api/state': 'state', '/api/history': 'history', '/api/symbol': 'symbol' }[base];
+  return view ? `/api/demo?view=${view}${qs && view === 'symbol' ? `&${qs}` : ''}` : null;
+}
+
 async function api(path, { method = 'GET', body } = {}) {
+  if (S.demo) {
+    const demo = method === 'GET' ? demoPath(path) : null;
+    if (!demo) throw Object.assign(new Error(DEMO_NO), { code: 'demo' });
+    path = demo;
+  }
   const r = await fetch(path, {
     method,
     headers: { 'content-type': 'application/json', authorization: `Bearer ${S.token}` },
@@ -335,6 +348,7 @@ function render() {
         <span>${dateline}</span>
         ${v.wide ? '' : `<span><b>Weather:</b> ${esc(weather)}</span>`}
       </div>
+      ${S.demo ? `<div class="demo-bar" style="font-size:${v.datelineFs}"><span><b>Demo edition.</b> A sample reader, ${st.day_count} days in. Look around; nothing here is real.</span><button class="redlink" data-act="signin">Sign in →</button></div>` : ''}
       ${v.wide ? `<nav class="topnav" aria-label="Sections">${tabsHtml}</nav>` : ''}
       <div class="head" style="grid-template-columns:${v.headCols};padding:${v.headPad};border-bottom:${v.headRule}">
         ${v.wide ? `<div class="ear"><b>Weather.</b> ${esc(weather)}. Light cravings after lunch, clearing by evening.</div>` : ''}
@@ -839,7 +853,7 @@ function screenSettings(st, v) {
       <p class="body13" style="font-style:italic;line-height:normal">Cooldown and hold can go up, never down. Editors are only human.</p>
       <button class="btn-ink save" type="submit">Send to press</button>
       ${S.settingsMsg ? `<p class="msg${S.settingsErr ? ' error' : ''}">${esc(S.settingsMsg)}</p>` : ''}
-      ${S.config?.devFake ? '' : '<button class="btn-outline signout" type="button" data-act="signout">Sign out</button>'}
+      ${S.config?.devFake ? '' : S.demo ? '<button class="btn-outline signout" type="button" data-act="signin">Sign in</button>' : '<button class="btn-outline signout" type="button" data-act="signout">Sign out</button>'}
     </div>
   </form>`;
 }
@@ -1105,6 +1119,8 @@ const ACT = {
     }
   },
   signout: () => signOut(),
+  signin: () => renderLogin(),
+  demo: () => renderDemo(),
 };
 
 function bindEvents() {
@@ -1172,7 +1188,17 @@ async function signOut() {
   S.token = null;
   S.state = null;
   if (S.supabase) await S.supabase.auth.signOut().catch(() => {});
-  renderLogin();
+  renderDemo();
+}
+
+// Visitors who are not signed in see the sample reader.
+function renderDemo() {
+  S.demo = true;
+  S.token = null;
+  S.history = null;
+  S.editDay = null;
+  S.confirmMode = null;
+  renderApp();
 }
 
 function renderLogin(message = '') {
@@ -1192,6 +1218,7 @@ function renderLogin(message = '') {
         <button class="btn-outline" type="submit">Sign in with code</button>
       </form>
       <p class="msg" id="loginMsg" style="margin-top:14px;text-align:center">${esc(message)}</p>
+      <p style="text-align:center;margin-top:18px"><button class="redlink" data-act="demo">← Back to the demo</button></p>
     </section>`;
   const msg = $app.querySelector('#loginMsg');
   const otp = $app.querySelector('#otp');
@@ -1226,7 +1253,7 @@ async function renderApp() {
   try {
     await refresh();
   } catch (err) {
-    if (S.token) $app.innerHTML = `<div class="boot">${esc(err.message)}</div>`;
+    if (S.token || S.demo) $app.innerHTML = `<div class="boot">${esc(err.message)}</div>`;
     return;
   }
   try {
@@ -1259,9 +1286,10 @@ async function boot() {
   S.supabase.auth.onAuthStateChange((event, session) => {
     const had = Boolean(S.token);
     S.token = session?.access_token || null;
-    if (event === 'INITIAL_SESSION') return S.token ? renderApp() : renderLogin();
+    if (S.token) S.demo = false;
+    if (event === 'INITIAL_SESSION') return S.token ? renderApp() : renderDemo();
     if (S.token && !had) renderApp();
-    else if (!S.token && had) renderLogin();
+    else if (!S.token && had) renderDemo();
   });
 }
 

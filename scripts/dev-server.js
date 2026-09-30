@@ -6,42 +6,13 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setDeps } from '../lib/deps.js';
-import { makeMemoryStore } from '../lib/store/memory.js';
-import { makeService } from '../lib/service.js';
-import { makeFakeBroker } from '../lib/broker-fake.js';
+import { seedDemo } from '../lib/demo.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.env.PORT || 3000);
 
-const DAY = 86400000;
-let offsetMs = 0;
-const clock = () => new Date(Date.now() + offsetMs);
-const store = makeMemoryStore();
-const broker = makeFakeBroker({ autoFill: true, clock });
-const service = makeService({ store, broker, clock });
-
-// Three weeks of believable history, like the design's "Three weeks in":
-// three smoked days and two trades. SEED=0 starts empty (day one).
-async function seed(days = 21) {
-  offsetMs = -days * DAY;
-  await service.ensureInitialized('America/Los_Angeles');
-  const dayKey = () => clock().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
-  for (let d = days; d >= 1; d--) {
-    offsetMs = -d * DAY;
-    await service.getState();
-    if (d === 16 || d === 10 || d === 9) await service.setDay({ day: dayKey(), state: 'smoked' });
-    await service.processQueue();
-    if (d === 18) await service.requestTrade({ symbol: 'VOO', side: 'buy', notional_cents: 2000 });
-    if (d === 11) await service.requestTrade({ symbol: 'AAPL', side: 'buy', notional_cents: 5000 });
-  }
-  offsetMs = 0;
-  await service.processQueue();
-  broker.setPrice('AAPL', 235.4);
-  broker.setPrice('VOO', 551.2);
-  await service.getState();
-}
-if (process.env.SEED !== '0') await seed();
-else await service.ensureInitialized('America/Los_Angeles');
+// Three weeks of believable history, or day one with SEED=0.
+const { service, broker } = await seedDemo({ days: process.env.SEED === '0' ? 0 : 21 });
 setDeps({
   auth: { owner: async () => ({ id: 'dev', email: 'dev@localhost' }), cron: () => true },
   service,

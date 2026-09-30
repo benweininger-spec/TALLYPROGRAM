@@ -96,6 +96,14 @@ button { touch-action: manipulation; }
 .headline { font-family: var(--caslon); font-weight: 400; font-size: clamp(25px, 4.1vw, 64px); line-height: 1.02; margin: 8px auto 6px; max-width: 26ch; text-wrap: balance; }
 .deck { font-style: italic; font-size: clamp(11.5px, 1.25vw, 19px); line-height: 1.3; margin: 0 auto; max-width: 58ch; text-wrap: balance; }
 
+/* Demo banner, under the dateline for visitors who are not signed in */
+.demo-bar {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 0;
+  border-bottom: 1px solid var(--ink); font-family: var(--franklin); letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+}
+.demo-bar b { color: var(--red); }
+.demo-bar .redlink { font-size: inherit; min-height: 32px; white-space: nowrap; }
+
 /* Shared bits */
 .lbl { font-family: var(--franklin); font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; border-bottom: 1px solid var(--ink); padding-bottom: 2px; }
 .lbl-row { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--ink); padding-bottom: 2px; }
