@@ -82,3 +82,16 @@ test('secret Supabase keys are never treated as browser-safe', () => {
   assert.equal(isSecretKey(jwt('anon')), false);
   assert.equal(isSecretKey('sb_publishable_abc'), false);
 });
+
+import demo from '../api/demo.js';
+test('demo: public, 22 days in, read-only by construction', async () => {
+  const st = await call(demo, { token: null, url: '/api/demo?view=state' });
+  assert.equal(st.statusCode, 200);
+  assert.equal(st.body.day_count, 22);
+  assert.equal(st.body.days.filter((d) => d.state === 'smoked').length, 3);
+  assert.equal(st.body.positions.length, 2);
+  const h = await call(demo, { token: null, url: '/api/demo?view=history' });
+  assert.equal(h.body.days.length, 22);
+  assert.equal((await call(demo, { token: null, method: 'PUT', url: '/api/demo' })).statusCode, 405);
+  assert.equal((await call(demo, { token: null, url: '/api/demo?view=settings' })).statusCode, 400);
+});
