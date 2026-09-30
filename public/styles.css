@@ -98,3 +98,24 @@ h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacin
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* Now */
+.center { text-align: center; }
+.small { font-size: 13px; }
+.bank { position: relative; text-align: center; padding: 28px 0 24px; }
+.bank-label { color: var(--muted); font-size: 14px; }
+.bank-amount { font-size: clamp(48px, 16vw, 72px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.bank-amount.pulse { animation: pulse 0.5s ease-out; }
+.bank-float { position: absolute; left: 0; right: 0; top: 18px; color: var(--up); font-weight: 700; font-size: 20px; opacity: 0; pointer-events: none; }
+.bank-float.go { animation: float 1.2s ease-out forwards; }
+@keyframes pulse { 0% { transform: scale(1); } 40% { transform: scale(1.06); color: var(--up); } 100% { transform: scale(1); } }
+@keyframes float { 0% { opacity: 0; transform: translateY(8px); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(-24px); } }
+.btn.craving { padding: 26px 16px; font-size: 22px; border-radius: 20px; box-shadow: 0 8px 28px rgba(255, 122, 61, 0.22); }
+.btn.craving:active { transform: scale(0.98); }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 24px 0 18px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 10px; text-align: center; }
+.stat-n { font-size: 26px; font-weight: 700; }
+.stat-l { font-size: 12px; color: var(--muted); }
+.meter { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-bottom: 6px; }
+.meter-fill { height: 100%; background: var(--ember); border-radius: 3px; transition: width 0.4s; }
+.btn.slip { margin-top: 36px; font-weight: 500; font-size: 14px; padding: 11px; }
