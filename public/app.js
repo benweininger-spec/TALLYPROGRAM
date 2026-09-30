@@ -96,6 +96,7 @@ const TABS = [
   { id: 'now', label: 'Now', render: renderNow },
   { id: 'trade', label: 'Trade', render: renderTrade },
   { id: 'ledgers', label: 'Ledgers', render: renderLedgers },
+  { id: 'settings', label: 'Settings', render: renderSettings },
 ];
 
 function storedTab() {
@@ -664,6 +665,121 @@ function drawChart(box, days) {
   });
 }
 
+
+// ---------- Settings ----------
+const dollars = (cents) => (cents / 100).toFixed(2).replace(/\.00$/, '');
+const toCents = (v) => Math.round(Number(v) * 100);
+
+function renderSettings(el) {
+  const st = S.state;
+  const s = st.settings;
+  const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [s.timezone];
+  el.innerHTML = `
+    <div class="card mode-card">
+      <div class="row">
+        <div><div class="strong">Broker</div><div class="muted small">${
+          st.mode === 'paper' ? 'Alpaca paper trading. Orders use pretend money.'
+          : st.mode === 'live' ? 'Alpaca live trading. Orders use real money.'
+          : 'No Alpaca keys on the server. Trading is off.'}</div></div>
+      </div>
+    </div>
+
+    <form id="settings" class="stack" novalidate>
+      <h2>Habit</h2>
+      <div class="card stack">
+        <label class="field"><span>Quit date</span>
+          <input class="input" type="date" name="quit_date" value="${esc(s.quit_date)}" max="${esc(st.today)}" required></label>
+        <div class="grid2">
+          <label class="field"><span>Pack price ($)</span>
+            <input class="input num" name="pack_price_cents" inputmode="decimal" value="${dollars(s.pack_price_cents)}"></label>
+          <label class="field"><span>Packs per day</span>
+            <input class="input num" name="packs_per_day" inputmode="decimal" value="${s.packs_per_day}"></label>
+        </div>
+        <label class="field"><span>Timezone</span>
+          <select class="input" name="timezone">${zones.map((z) => `<option ${z === s.timezone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></label>
+      </div>
+
+      <h2>Bank</h2>
+      <div class="card stack">
+        <label class="field"><span>Credit per craving beaten ($)</span>
+          <input class="input num" name="credit_per_craving_cents" inputmode="decimal" value="${dollars(s.credit_per_craving_cents)}"></label>
+        <div class="row small"><span class="muted">Daily cap, from pack price × packs per day</span><span class="num" id="cap">${fmt(s.daily_credit_cap_cents)}</span></div>
+      </div>
+
+      <h2>Trading rules</h2>
+      <div class="card stack">
+        <label class="field"><span>Trade tiers ($, $20 to $200, comma separated)</span>
+          <input class="input num" name="tiers_cents" value="${s.tiers_cents.map(dollars).join(', ')}"></label>
+        <label class="field"><span>Minimum trade ($)</span>
+          <input class="input num" name="min_trade_cents" inputmode="decimal" value="${dollars(s.min_trade_cents)}"></label>
+        <div class="grid2">
+          <label class="field"><span>Cooldown (hours, 24+)</span>
+            <input class="input num" name="cooldown_hours" inputmode="numeric" value="${s.cooldown_hours}"></label>
+          <label class="field"><span>Hold (days, 7+)</span>
+            <input class="input num" name="hold_days" inputmode="numeric" value="${s.hold_days}"></label>
+        </div>
+        <p class="faint small">Cooldown and hold can go up, not down. The $20 to $200 range is fixed.</p>
+      </div>
+
+      <button class="btn primary" type="submit">Save</button>
+      <p class="msg" id="setMsg"></p>
+    </form>
+
+    <button class="btn ghost" id="signout" style="margin-top:28px">Sign out</button>`;
+
+  const form = el.querySelector('#settings');
+  const msg = el.querySelector('#setMsg');
+  const cap = el.querySelector('#cap');
+  const updateCap = () => {
+    const c = Math.round(toCents(form.pack_price_cents.value) * Number(form.packs_per_day.value));
+    cap.textContent = Number.isFinite(c) ? fmt(c) : '–';
+  };
+  form.pack_price_cents.addEventListener('input', updateCap);
+  form.packs_per_day.addEventListener('input', updateCap);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(form));
+    const patch = {
+      quit_date: v.quit_date,
+      timezone: v.timezone,
+      pack_price_cents: toCents(v.pack_price_cents),
+      packs_per_day: Number(v.packs_per_day),
+      credit_per_craving_cents: toCents(v.credit_per_craving_cents),
+      tiers_cents: v.tiers_cents.split(/[\s,]+/).filter(Boolean).map(toCents),
+      min_trade_cents: toCents(v.min_trade_cents),
+      cooldown_hours: Number(v.cooldown_hours),
+      hold_days: Number(v.hold_days),
+    };
+    // Only send what changed, so an untouched field never trips validation.
+    for (const [k, val] of Object.entries(patch)) {
+      if (JSON.stringify(val) === JSON.stringify(s[k])) delete patch[k];
+    }
+    if (!Object.keys(patch).length) {
+      msg.className = 'msg';
+      msg.textContent = 'Nothing changed.';
+      return;
+    }
+    const btn = form.querySelector('[type=submit]');
+    btn.disabled = true;
+    try {
+      await api('/api/settings', { method: 'PUT', body: patch });
+      await refresh();
+      S.history = null;
+      renderTab();
+      const m = $app.querySelector('#setMsg');
+      m.className = 'msg';
+      m.textContent = 'Saved.';
+    } catch (err) {
+      msg.className = 'msg error';
+      msg.textContent = err.message;
+      btn.disabled = false;
+    }
+  });
+  el.querySelector('#signout').addEventListener('click', signOut);
+  if (S.config.devFake) el.querySelector('#signout').hidden = true;
+}
+
 // ---------- boot ----------
 async function boot() {
   S.config = await fetch('/api/config').then((r) => r.json());
@@ -688,6 +804,14 @@ async function boot() {
     else if (!S.token && had) renderLogin();
   });
 }
+
+// Coming back to the app (phone unlocked, tab switched) shows fresh numbers.
+// Settings is skipped so a half-edited form is never wiped.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !S.token || !S.state || S.tab === 'settings') return;
+  S.history = null;
+  refresh().then(renderTab).catch(() => {});
+});
 
 boot().catch((err) => {
   $app.innerHTML = `<div class="boot">Could not start: ${esc(err.message)}</div>`;

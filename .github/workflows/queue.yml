@@ -1,0 +1,25 @@
+# Optional: advances the trade queue every 15 minutes in US market hours.
+# Vercel Cron in vercel.json runs once a day, which works on every plan; and
+# opening the app also advances the queue. This fills the gap for free.
+# Enable by adding repo secrets ASHES_APP_URL and ASHES_CRON_SECRET.
+# GitHub only runs scheduled workflows from the default branch.
+name: Advance trade queue
+on:
+  schedule:
+    - cron: "*/15 13-21 * * 1-5"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Call execute-queue
+        env:
+          APP_URL: ${{ secrets.ASHES_APP_URL }}
+          CRON_SECRET: ${{ secrets.ASHES_CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "ASHES_APP_URL or ASHES_CRON_SECRET not set; skipping."
+            exit 0
+          fi
+          curl -fsS --max-time 60 -H "Authorization: Bearer $CRON_SECRET" "${APP_URL%/}/api/cron/execute-queue"

@@ -15,6 +15,7 @@
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; background: var(--bg); color: var(--text); }
 body {
   font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -191,3 +192,8 @@ details.table-card { margin-top: 12px; }
 .st-filled { color: var(--text); }
 .st-rejected { color: var(--down); }
 .st-queued, .st-submitted { color: var(--ember); }
+
+/* Settings */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+select.input { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%); background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
+.mode-card .badge { flex-shrink: 0; }

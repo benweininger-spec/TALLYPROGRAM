@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "description": "Quit-smoking craving bank that unlocks small, capped, long-only stock trades.",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "dev": "node scripts/dev-server.js",
