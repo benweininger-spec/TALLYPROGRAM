@@ -31,7 +31,7 @@ async function signOut() {
 function renderLogin(message = '') {
   $app.innerHTML = `
     <section class="login">
-      <h1>Ashes</h1>
+      <h1>Ciggy Bank</h1>
       <p>Cravings you beat become money you can invest.</p>
       <form id="login" class="stack">
         <label class="field"><span>Email</span>
@@ -101,7 +101,7 @@ const TABS = [
 
 function storedTab() {
   try {
-    return localStorage.getItem('ashes.tab');
+    return localStorage.getItem('ciggybank.tab');
   } catch {
     return null;
   }
@@ -129,7 +129,7 @@ async function renderApp() {
     b.addEventListener('click', () => {
       S.tab = b.dataset.tab;
       try {
-        localStorage.setItem('ashes.tab', S.tab);
+        localStorage.setItem('ciggybank.tab', S.tab);
       } catch {}
       $app.querySelectorAll('[data-tab]').forEach((x) => {
         if (x === b) x.setAttribute('aria-current', 'page');
@@ -149,7 +149,7 @@ function renderTab() {
   const tab = TABS.find((t) => t.id === S.tab) || TABS[0];
   view.innerHTML = `
     <div class="topbar">
-      <span class="brand">Ashes</span>
+      <span class="brand">Ciggy Bank</span>
       <span class="badge ${esc(S.state.mode)}">${esc(S.state.mode)}</span>
     </div>
     <div id="tab"></div>`;

@@ -1,4 +1,4 @@
-# Ashes
+# Ciggy Bank
 
 A one-person quit-smoking app. Every craving you beat banks money. Banked money
 unlocks small, capped, long-only stock trades through Alpaca. The build spec is
@@ -84,7 +84,7 @@ supabase/migrations/  schema, row-level security, single-user lock
 Vercel Cron runs the trade queue once each weekday morning and a snapshot each
 evening. Opening the app also advances any trade whose 24 hours are up, so the cron is
 a backstop. For a 15-minute cadence on the free plan, add repo secrets
-`ASHES_APP_URL` and `ASHES_CRON_SECRET` to enable `.github/workflows/queue.yml`.
+`CIGGY_BANK_APP_URL` and `CIGGY_BANK_CRON_SECRET` to enable `.github/workflows/queue.yml`.
 
 ### 4. Going live
 

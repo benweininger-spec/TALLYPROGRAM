@@ -1,4 +1,4 @@
-# Ashes — build spec
+# Ciggy Bank — build spec
 
 A single-user app for Ben. Every cigarette craving he beats banks money. Banked money
 unlocks real, capped, long-only stock trades. The point is to make the saved money feel

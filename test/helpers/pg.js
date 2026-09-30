@@ -35,7 +35,7 @@ const SUPABASE_STUB = `
 `;
 
 export async function freshDatabase() {
-  const name = `ashes_t_${randomBytes(4).toString('hex')}`;
+  const name = `ciggy_t_${randomBytes(4).toString('hex')}`;
   const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
   await admin.unsafe(`create database ${name}`);
   await admin.end();
