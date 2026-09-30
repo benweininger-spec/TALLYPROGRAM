@@ -95,6 +95,7 @@ const ICONS = {
 const TABS = [
   { id: 'now', label: 'Now', render: renderNow },
   { id: 'trade', label: 'Trade', render: renderTrade },
+  { id: 'ledgers', label: 'Ledgers', render: renderLedgers },
 ];
 
 function storedTab() {
@@ -162,7 +163,7 @@ function renderNow(el) {
   el.innerHTML = `
     <div class="bank">
       <div class="bank-label">In the bank</div>
-      <div class="bank-amount num" id="bank">${fmt(st.bank_cents)}</div>
+      <div class="bank-amount" id="bank">${fmt(st.bank_cents)}</div>
       <div class="bank-float num" id="float" aria-hidden="true"></div>
     </div>
     <button class="btn primary craving" id="beat">I didn't smoke</button>
@@ -451,6 +452,216 @@ function renderTrade(el) {
   S.ticker = setInterval(() => {
     el.querySelectorAll('[data-count]').forEach((n) => (n.textContent = countdown(n.dataset.count)));
   }, 30000);
+}
+
+
+// ---------- Ledgers ----------
+const dayLabel = (day) => new Date(`${day}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+const signed = (cents) => (cents < 0 ? `−${fmt(-cents)}` : fmt(cents));
+const STATUS = { queued: 'Queued', submitted: 'At Alpaca', filled: 'Filled', cancelled: 'Cancelled', rejected: 'Rejected' };
+
+async function renderLedgers(el) {
+  if (!S.history) el.innerHTML = `<div class="empty">Loading…</div>`;
+  else drawLedgers(el);
+  try {
+    S.history = await api('/api/history');
+    if (S.tab === 'ledgers' && el.isConnected) drawLedgers(el);
+  } catch (err) {
+    if (el.isConnected) el.innerHTML = `<p class="msg error">${esc(err.message)}</p>`;
+  }
+}
+
+function drawLedgers(el) {
+  const h = S.history;
+  const yours = h.bank_cents + h.portfolio_cents;
+  const recent = [...h.days].reverse().slice(0, 30);
+  el.innerHTML = `
+    <div class="tiles">
+      <div class="tile">
+        <div class="tile-k"><span class="key burned"></span>Would have burned</div>
+        <div class="tile-v">${fmt(h.burned_cents)}</div>
+        <div class="tile-s">since you quit</div>
+      </div>
+      <div class="tile">
+        <div class="tile-k"><span class="key yours"></span>Yours</div>
+        <div class="tile-v">${fmt(yours)}</div>
+        <div class="tile-s num">bank ${fmt(h.bank_cents)} · stocks ${fmt(h.portfolio_cents)}</div>
+      </div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="legend" aria-hidden="true">
+        <span><i class="line-key burned"></i>Burned</span>
+        <span><i class="line-key yours"></i>Yours</span>
+      </div>
+      <div class="chart" id="chart"></div>
+    </div>
+
+    <details class="card table-card">
+      <summary>Daily values</summary>
+      <table class="tbl">
+        <thead><tr><th>Day</th><th class="r">Burned</th><th class="r">Yours</th></tr></thead>
+        <tbody>${recent.map((d) => `<tr><td>${dayLabel(d.day)}</td><td class="r num">${signed(-d.burned_cents)}</td><td class="r num">${d.yours_cents == null ? '–' : fmt(d.yours_cents)}</td></tr>`).join('')}</tbody>
+      </table>
+    </details>
+
+    <h2>Trade history</h2>
+    <div class="card table-card">
+      ${h.trades.length ? `<table class="tbl">
+        <thead><tr><th>Date</th><th>Trade</th><th class="r">Amount</th><th class="r">Status</th></tr></thead>
+        <tbody>${h.trades.map((t) => {
+          const filledValue = t.fill_qty && t.fill_price ? Math.round(Number(t.fill_qty) * Number(t.fill_price) * 100) : null;
+          const amount = filledValue ?? t.notional_cents;
+          return `<tr${t.reason ? ` title="${esc(t.reason)}"` : ''}>
+            <td>${shortDate(t.created_at)}</td>
+            <td><span class="side ${t.side}">${t.side}</span> ${esc(t.symbol)}</td>
+            <td class="r num">${amount == null ? '–' : fmt(amount)}</td>
+            <td class="r"><span class="st st-${t.status}">${STATUS[t.status]}</span>${t.status === 'rejected' && t.reason ? `<div class="faint small">${esc(t.reason)}</div>` : ''}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>` : `<div class="empty">No trades yet.</div>`}
+    </div>`;
+  drawChart(el.querySelector('#chart'), h.days);
+}
+
+function niceStep(range, target = 5) {
+  const raw = range / target;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const n = raw / mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+}
+
+function drawChart(box, days) {
+  const W = Math.max(280, box.clientWidth);
+  const H = 220;
+  const m = { l: 48, r: 12, t: 14, b: 26 };
+  const burned = days.map((d) => -d.burned_cents / 100);
+  const yours = days.map((d) => (d.yours_cents == null ? null : d.yours_cents / 100));
+  const vals = [...burned, ...yours.filter((v) => v != null), 0];
+  let lo = Math.min(...vals);
+  let hi = Math.max(...vals);
+  if (hi - lo < 10) hi = lo + 10;
+  const step = niceStep(hi - lo);
+  lo = Math.floor(lo / step) * step;
+  hi = Math.ceil(hi / step) * step;
+  const n = days.length;
+  const x = (i) => m.l + (n === 1 ? (W - m.l - m.r) / 2 : (i / (n - 1)) * (W - m.l - m.r));
+  const y = (v) => m.t + ((hi - v) / (hi - lo)) * (H - m.t - m.b);
+  const ticks = [];
+  for (let v = lo; v <= hi + 1e-9; v += step) ticks.push(v);
+  const tickLabel = (v) => (v === 0 ? '$0' : `${v < 0 ? '−' : ''}$${Math.abs(v).toLocaleString()}`);
+
+  const line = (arr) => {
+    let d = '';
+    let pen = false;
+    arr.forEach((v, i) => {
+      if (v == null) return (pen = false);
+      d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+      pen = true;
+    });
+    return d;
+  };
+  const area = (arr) => {
+    const segs = [];
+    let cur = [];
+    arr.forEach((v, i) => {
+      if (v == null) {
+        if (cur.length) segs.push(cur);
+        cur = [];
+      } else cur.push(i);
+    });
+    if (cur.length) segs.push(cur);
+    return segs
+      .map((sg) => `M${x(sg[0]).toFixed(1)},${y(0).toFixed(1)}` + sg.map((i) => `L${x(i).toFixed(1)},${y(arr[i]).toFixed(1)}`).join('') + `L${x(sg.at(-1)).toFixed(1)},${y(0).toFixed(1)}Z`)
+      .join('');
+  };
+  const lastYours = yours.findLastIndex((v) => v != null);
+  const xLabels = n === 1 ? [0] : [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i);
+
+  box.innerHTML = `
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" tabindex="0"
+      aria-label="Burned versus yours, ${n} days. Burned ${fmt(days.at(-1).burned_cents)}, yours ${fmt(days.at(-1).yours_cents || 0)}. Use arrow keys to read each day.">
+      ${ticks.map((v) => `<line class="grid ${v === 0 ? 'zero' : ''}" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/>
+        <text class="tick" x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${tickLabel(v)}</text>`).join('')}
+      ${xLabels.map((i) => `<text class="tick" x="${x(i)}" y="${H - 6}" text-anchor="${n === 1 ? 'middle' : i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}">${i === n - 1 ? 'Today' : dayLabel(days[i].day)}</text>`).join('')}
+      <path class="wash burned" d="${area(burned)}"/>
+      <path class="wash yours" d="${area(yours)}"/>
+      <path class="series burned" d="${line(burned)}"/>
+      <path class="series yours" d="${line(yours)}"/>
+      <circle class="dot burned" cx="${x(n - 1)}" cy="${y(burned[n - 1])}" r="4"/>
+      ${lastYours >= 0 ? `<circle class="dot yours" cx="${x(lastYours)}" cy="${y(yours[lastYours])}" r="4"/>` : ''}
+      <g class="cross" display="none">
+        <line class="cross-line" y1="${m.t}" y2="${H - m.b}"/>
+        <circle class="dot burned" r="4"/>
+        <circle class="dot yours" r="4"/>
+      </g>
+      <rect class="hit" x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}"/>
+    </svg>
+    <div class="tip" hidden></div>`;
+
+  const svg = box.querySelector('svg');
+  const cross = svg.querySelector('.cross');
+  const tip = box.querySelector('.tip');
+  let idx = n - 1;
+
+  function show(i) {
+    idx = Math.max(0, Math.min(n - 1, i));
+    const cx = x(idx);
+    cross.setAttribute('display', 'inline');
+    cross.querySelector('.cross-line').setAttribute('x1', cx);
+    cross.querySelector('.cross-line').setAttribute('x2', cx);
+    const [db, dy] = cross.querySelectorAll('.dot');
+    db.setAttribute('cx', cx);
+    db.setAttribute('cy', y(burned[idx]));
+    dy.setAttribute('visibility', yours[idx] == null ? 'hidden' : 'visible');
+    dy.setAttribute('cx', cx);
+    dy.setAttribute('cy', y(yours[idx] ?? 0));
+    tip.replaceChildren();
+    const head = document.createElement('div');
+    head.className = 'tip-h';
+    head.textContent = idx === n - 1 ? 'Today' : dayLabel(days[idx].day);
+    tip.append(head);
+    for (const [cls, label, v] of [['yours', 'Yours', days[idx].yours_cents], ['burned', 'Burned', -days[idx].burned_cents]]) {
+      const row = document.createElement('div');
+      row.className = 'tip-r';
+      const key = document.createElement('i');
+      key.className = `line-key ${cls}`;
+      const val = document.createElement('strong');
+      val.className = 'num';
+      val.textContent = v == null ? '–' : signed(v);
+      const name = document.createElement('span');
+      name.textContent = label;
+      row.append(key, val, name);
+      tip.append(row);
+    }
+    tip.hidden = false;
+    // Beside the crosshair, never over it, so the day's dots stay visible.
+    const tw = tip.offsetWidth;
+    const left = cx + 12 + tw <= W ? cx + 12 : cx - 12 - tw;
+    tip.style.left = `${Math.max(0, left)}px`;
+  }
+  function hide() {
+    cross.setAttribute('display', 'none');
+    tip.hidden = true;
+  }
+  const pick = (e) => {
+    const r = svg.getBoundingClientRect();
+    const px = e.clientX - r.left;
+    return n === 1 ? 0 : Math.round(((px - m.l) / (W - m.l - m.r)) * (n - 1));
+  };
+  svg.addEventListener('pointermove', (e) => show(pick(e)));
+  svg.addEventListener('pointerdown', (e) => show(pick(e)));
+  svg.addEventListener('pointerleave', hide);
+  svg.addEventListener('focus', () => show(idx));
+  svg.addEventListener('blur', hide);
+  svg.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') show(idx - 1);
+    else if (e.key === 'ArrowRight') show(idx + 1);
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(n - 1);
+    else return;
+    e.preventDefault();
+  });
 }
 
 // ---------- boot ----------
