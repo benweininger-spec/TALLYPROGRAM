@@ -49,8 +49,8 @@ supabase/migrations/  schema, row-level security, single-user lock
 ### 1. Supabase
 
 1. Create a project at supabase.com.
-2. Open the SQL Editor. Paste and run `supabase/migrations/0001_core.sql`, then
-   `0002_single_user_rls.sql`, then `0003_revoke_anon_is_owner.sql`. Or run `DATABASE_URL=... npm run migrate` locally.
+2. Open the SQL Editor. Paste and run `supabase/migrations/20260930022438_core.sql`, then
+   the `single_user_rls` and `revoke_anon_is_owner` files, in filename order. Or run `DATABASE_URL=... npm run migrate` locally.
 3. Lock the app to your email:
    ```sql
    insert into private.app_config (allowed_email) values ('you@example.com');
