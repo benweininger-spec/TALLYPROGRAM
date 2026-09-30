@@ -62,31 +62,6 @@ test('RLS: owner reads, everyone else sees nothing, nobody writes', opts, async 
   );
 });
 
-test('v2 migration offsets legacy craving credits once and keeps the rows', opts, async () => {
-  const { mkdtemp, readdir, copyFile } = await import('node:fs/promises');
-  const { join } = await import('node:path');
-  const { tmpdir } = await import('node:os');
-  const src = new URL('../supabase/migrations/', import.meta.url).pathname;
-  const files = (await readdir(src)).filter((f) => f.endsWith('.sql')).sort();
-  const early = await mkdtemp(join(tmpdir(), 'mig-'));
-  for (const f of files.slice(0, 3)) await copyFile(join(src, f), join(early, f));
-  const db2 = await freshDatabase({ migrationsDir: early });
-  const sql2 = postgres(db2.url, { max: 1, onnotice: () => {} });
-  try {
-    await sql2`insert into bank_ledger (delta_cents, kind) values (300, 'craving'), (300, 'craving'), (-2000, 'trade_debit')`;
-    await migrate(db2.url, { log: () => {} });
-    const rows = await sql2`select kind::text, delta_cents from bank_ledger order by kind::text`;
-    assert.equal(rows.filter((r) => r.kind === 'craving').length, 2);
-    const [{ n }] = await sql2`select coalesce(sum(delta_cents), 0)::int as n from bank_ledger where kind in ('craving', 'adjust')`;
-    assert.equal(n, 0);
-    const [{ total }] = await sql2`select sum(delta_cents)::int as total from bank_ledger`;
-    assert.equal(total, -2000);
-  } finally {
-    await sql2.end();
-    await db2.drop();
-  }
-});
-
 test('v2 tables: a settled day must carry its amount', opts, async () => {
   await assert.rejects(sql`insert into days (day, state, settled_at) values ('2026-10-01', 'clean', now())`, /days_settled_has_cents/);
   await sql`insert into days (day, state) values ('2026-10-01', 'clean')`;

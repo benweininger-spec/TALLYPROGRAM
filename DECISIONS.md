@@ -104,9 +104,12 @@ at each smoked day's close, paper theme only. These are the calls it left open.
 - **Moving the quit date later** takes the money for the dropped days back out of the
   bank and the ghost. Moving it earlier settles the added days under the current
   position.
-- **Old craving credits are offset once** by the migration, with an 'adjust' entry
-  dated on the last craving. The rows stay. v2 pays each clean day in full, which
-  covers what the taps used to bank; keeping both would count the same day twice.
+- **Old craving credits are cancelled by the server**, not the migration. v2 pays
+  each clean day in full, which covers what the taps used to bank; keeping both would
+  count the same day twice. On any write, the server books one 'adjust' entry against
+  whatever craving credit is not yet cancelled, marked with a fixed reference so it
+  never repeats. That also catches taps made on the live v1 app after the migration
+  but before v2 deploys. The craving rows stay.
 - **Ghost prices** come from Alpaca's daily bars, split-adjusted, cached per calendar
   day in `price_closes`. Weekends and holidays use the last close. Only closes that
   are final (before today in New York) are cached. A lot whose close is not known yet

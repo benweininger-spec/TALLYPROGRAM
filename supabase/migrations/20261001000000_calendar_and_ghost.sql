@@ -56,10 +56,3 @@ create policy owner_read on public.price_closes for select to authenticated usin
 
 revoke insert, update, delete, truncate on public.days, public.ghost_lots, public.price_closes
 from anon, authenticated;
-
--- v2 pays each clean day in full, which covers what craving taps used to
--- bank. Offset the old craving credits once. The original rows stay.
--- Dated with the last craving so both land on the same day in history.
-insert into bank_ledger (occurred_at, delta_cents, kind)
-select max(occurred_at), -sum(delta_cents), 'adjust' from bank_ledger where kind = 'craving'
-having sum(delta_cents) <> 0;

@@ -239,3 +239,25 @@ forEachStore('calendar and ghost', (ctx) => {
     assert.deepEqual(st.unlocked_tiers, []);
   });
 });
+
+forEachStore('v1 craving credits', (ctx) => {
+  test('are cancelled once, including taps made while v1 was still live; rows stay', async () => {
+    const now = new Date('2026-09-30T17:00:00Z');
+    const svc = makeService({ store: ctx.store, clock: () => now });
+    await svc.ensureInitialized('America/Los_Angeles');
+    const tap = (at) => ctx.store.tx((r) => r.insertLedger({ occurred_at: at, delta_cents: 300, kind: 'craving' }));
+    await tap(new Date('2026-09-30T15:00:00Z'));
+    await tap(new Date('2026-09-30T16:00:00Z'));
+    await ctx.store.tx((r) => r.insertLedger({ occurred_at: now, delta_cents: -2000, kind: 'trade_debit' }));
+    let st = await svc.getState();
+    assert.equal(st.bank_cents, -2000);
+    st = await svc.getState();
+    assert.equal(st.bank_cents, -2000);
+    await tap(new Date('2026-09-30T16:30:00Z'));
+    st = await svc.getState();
+    assert.equal(st.bank_cents, -2000);
+    const ledger = await ctx.store.run((r) => r.listLedger());
+    assert.equal(ledger.filter((e) => e.kind === 'craving').length, 3);
+    assert.equal(ledger.filter((e) => e.kind === 'adjust').length, 2);
+  });
+});
