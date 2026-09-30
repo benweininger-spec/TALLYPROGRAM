@@ -65,3 +65,12 @@ test('wrong method is 405, and a craving round-trips', async () => {
   assert.equal(r.body.credited_cents, 300);
   assert.equal(r.headers['cache-control'], 'no-store');
 });
+
+import { isSecretKey } from '../lib/deps.js';
+test('secret Supabase keys are never treated as browser-safe', () => {
+  const jwt = (role) => `x.${Buffer.from(JSON.stringify({ role })).toString('base64url')}.y`;
+  assert.equal(isSecretKey('sb_secret_abc'), true);
+  assert.equal(isSecretKey(jwt('service_role')), true);
+  assert.equal(isSecretKey(jwt('anon')), false);
+  assert.equal(isSecretKey('sb_publishable_abc'), false);
+});
