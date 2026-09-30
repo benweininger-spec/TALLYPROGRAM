@@ -8,14 +8,46 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setDeps } from '../lib/deps.js';
 import { makeMemoryStore } from '../lib/store/memory.js';
 import { makeService } from '../lib/service.js';
+import { makeFakeBroker } from '../lib/broker-fake.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(process.env.PORT || 3000);
 
+const DAY = 86400000;
+let offsetMs = 0;
+const clock = () => new Date(Date.now() + offsetMs);
 const store = makeMemoryStore();
-const brokerModule = await import('../lib/broker-fake.js').catch(() => null);
-const broker = brokerModule ? brokerModule.makeFakeBroker({ autoFill: true }) : null;
-const service = makeService({ store, broker });
+const broker = makeFakeBroker({ autoFill: true, clock });
+const service = makeService({ store, broker, clock });
+
+// Three weeks of believable history so every screen has something on it.
+// SEED=0 starts empty instead.
+async function seed(days = 21) {
+  offsetMs = -days * DAY;
+  await service.ensureInitialized('America/Los_Angeles');
+  let n = 7;
+  const rand = () => ((n = (n * 9301 + 49297) % 233280) / 233280);
+  for (let d = days; d >= 1; d--) {
+    offsetMs = -d * DAY;
+    if (d === 12) await service.logCraving({ beaten: false });
+    const taps = 2 + Math.floor(rand() * 4);
+    for (let i = 0; i < taps; i++) {
+      offsetMs += 45 * 60000;
+      await service.logCraving({ beaten: true });
+    }
+    await service.processQueue();
+    if (service.snapshot) await service.snapshot();
+    if (d === 16) await service.requestTrade({ symbol: 'VTI', side: 'buy', notional_cents: 2000 });
+    if (d === 4) await service.requestTrade({ symbol: 'AAPL', side: 'buy', notional_cents: 5000 });
+    if (d === 2) await service.requestTrade({ symbol: 'VOO', side: 'buy', notional_cents: 2000 });
+  }
+  offsetMs = -DAY;
+  await service.processQueue();
+  offsetMs = 0;
+  broker.setPrice('VTI', 301.4);
+  broker.setPrice('AAPL', 226.1);
+}
+if (process.env.SEED !== '0') await seed();
 setDeps({
   auth: { owner: async () => ({ id: 'dev', email: 'dev@localhost' }), cron: () => true },
   service,

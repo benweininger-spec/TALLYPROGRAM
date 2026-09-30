@@ -92,7 +92,10 @@ const ICONS = {
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>',
 };
 
-const TABS = [{ id: 'now', label: 'Now', render: renderNow }];
+const TABS = [
+  { id: 'now', label: 'Now', render: renderNow },
+  { id: 'trade', label: 'Trade', render: renderTrade },
+];
 
 function storedTab() {
   try {
@@ -138,6 +141,7 @@ async function renderApp() {
 }
 
 function renderTab() {
+  clearInterval(S.ticker);
   const view = $app.querySelector('#view');
   if (!view || !S.state) return;
   const tab = TABS.find((t) => t.id === S.tab) || TABS[0];
@@ -224,6 +228,229 @@ function renderNow(el) {
       slip.disabled = false;
     }
   });
+}
+
+
+// ---------- Trade ----------
+const when = (iso) =>
+  new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const shortDate = (iso) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+function countdown(iso) {
+  const ms = new Date(iso) - Date.now();
+  if (ms <= 0) return 'due now';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+}
+
+function renderTrade(el) {
+  const st = S.state;
+  const f = (S.tradeForm ||= { tier: null, symbol: null, name: '', confirm: false, msg: '', error: false });
+  if (f.tier && !st.unlocked_tiers.includes(f.tier)) f.tier = null;
+  const offline = st.mode === 'offline';
+  const tiers = st.settings.tiers_cents;
+  const ready = f.tier && f.symbol && !offline;
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="row"><span class="muted">In the bank</span><span class="num strong">${fmt(st.bank_cents)}</span></div>
+      <div class="tiers" role="radiogroup" aria-label="Trade size">
+        ${tiers.map((t) => {
+          const open = st.unlocked_tiers.includes(t);
+          return `<button class="tier ${f.tier === t ? 'on' : ''}" data-tier="${t}" role="radio" aria-checked="${f.tier === t}" ${open ? '' : 'disabled'}>
+            <span class="tier-amt num">${fmtWhole(t)}</span>
+            <span class="tier-sub num">${open ? 'unlocked' : `$${Math.ceil((t - st.bank_cents) / 100)} to go`}</span>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <h2>New trade</h2>
+    ${offline ? `<div class="card muted">Trading is off until Alpaca keys are set on the server.</div>` : `
+    <div class="card stack">
+      ${f.symbol ? `
+        <div class="row">
+          <div><div class="strong">${esc(f.symbol)}</div><div class="muted small">${esc(f.name)}</div></div>
+          <button class="btn small ghost" id="clearSym">Change</button>
+        </div>` : `
+        <label class="field"><span>Stock or ETF</span>
+          <input class="input" id="sym" placeholder="Ticker or name, like VTI or Apple" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        </label>
+        <ul class="list results" id="results"></ul>`}
+      ${f.confirm ? `
+        <div class="confirm">
+          <p>Buy <strong>${fmt(f.tier)}</strong> of <strong>${esc(f.symbol)}</strong>. The bank pays now. It goes to Alpaca after <strong>${when(new Date(Date.now() + st.settings.cooldown_hours * 3600000))}</strong>, and you can cancel until then.</p>
+          <div class="two">
+            <button class="btn ghost" id="back">Back</button>
+            <button class="btn primary" id="confirm">Queue it</button>
+          </div>
+        </div>` : `
+        <button class="btn primary" id="queueBuy" ${ready ? '' : 'disabled'}>
+          ${ready ? `Queue ${fmt(f.tier)} of ${esc(f.symbol)}` : !st.unlocked_tiers.length ? 'Bank more to unlock a trade' : !f.tier ? 'Pick a size above' : 'Pick a stock'}
+        </button>`}
+      <p class="msg ${f.error ? 'error' : ''}" id="tradeMsg">${esc(f.msg)}</p>
+    </div>`}
+
+    <h2>Queue</h2>
+    ${st.queue_error ? `<p class="msg error">Could not reach Alpaca: ${esc(st.queue_error)}</p>` : ''}
+    <div class="card">
+      ${st.queue.length ? `<ul class="list">${st.queue.map((t) => `
+        <li class="row">
+          <div>
+            <div><span class="side ${t.side}">${t.side}</span> <strong>${esc(t.symbol)}</strong> <span class="num">${t.side === 'buy' ? fmt(t.notional_cents) : `all, about ${fmt(t.notional_cents)}`}</span></div>
+            <div class="muted small">${t.status === 'queued' ? `Sends <span class="num" data-count="${esc(t.execute_after)}">${countdown(t.execute_after)}</span>` : 'At Alpaca, waiting to fill'}</div>
+          </div>
+          ${t.status === 'queued' ? `<button class="btn small ghost" data-cancel="${esc(t.id)}">Cancel</button>` : ''}
+        </li>`).join('')}</ul>` : `<div class="empty">Nothing queued.</div>`}
+    </div>
+
+    <h2>Positions</h2>
+    <div class="card">
+      ${st.positions.length ? `<ul class="list">${st.positions.map((p) => {
+        const gain = p.value_cents - p.cost_cents;
+        return `
+        <li>
+          <div class="row">
+            <div><strong>${esc(p.symbol)}</strong> <span class="muted small num">${Number(p.qty).toFixed(4)} sh</span></div>
+            <div class="num strong">${fmt(p.value_cents)}</div>
+          </div>
+          <div class="row small">
+            <span class="num ${gain > 0 ? 'up' : gain < 0 ? 'down' : 'muted'}">${gain >= 0 ? '+' : '−'}${fmt(Math.abs(gain))} on ${fmt(p.cost_cents)}</span>
+            ${p.sellable ? `<button class="btn small ghost" data-sell="${esc(p.symbol)}">Sell all</button>` : `<span class="faint">Locked until ${shortDate(p.sell_unlocks_at)}</span>`}
+          </div>
+        </li>`;
+      }).join('')}</ul>` : `<div class="empty">No positions yet.</div>`}
+      ${st.prices_stale && st.positions.length ? `<p class="faint small">Prices unavailable, showing cost.</p>` : ''}
+    </div>`;
+
+  const msg = (text, error = false) => {
+    f.msg = text;
+    f.error = error;
+    const m = el.querySelector('#tradeMsg');
+    if (m) {
+      m.textContent = text;
+      m.className = `msg ${error ? 'error' : ''}`;
+    }
+  };
+
+  el.querySelectorAll('[data-tier]').forEach((b) =>
+    b.addEventListener('click', () => {
+      f.tier = Number(b.dataset.tier);
+      f.confirm = false;
+      f.msg = '';
+      renderTab();
+    }),
+  );
+  el.querySelector('#clearSym')?.addEventListener('click', () => {
+    Object.assign(f, { symbol: null, name: '', confirm: false, msg: '' });
+    renderTab();
+    $app.querySelector('#sym')?.focus();
+  });
+
+  const input = el.querySelector('#sym');
+  if (input) {
+    const results = el.querySelector('#results');
+    let timer = null;
+    let seq = 0;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      const q = input.value.trim();
+      if (!q) {
+        results.innerHTML = '';
+        return;
+      }
+      timer = setTimeout(async () => {
+        const mine = ++seq;
+        try {
+          const r = await api(`/api/symbol?q=${encodeURIComponent(q)}`);
+          if (mine !== seq) return;
+          results.innerHTML = r.results.length
+            ? r.results.map((a) => `<li><button class="result" data-sym="${esc(a.symbol)}" data-name="${esc(a.name)}"><strong>${esc(a.symbol)}</strong> <span class="muted">${esc(a.name)}</span></button></li>`).join('')
+            : `<li class="empty">No fractional stock or ETF matches.</li>`;
+          results.querySelectorAll('[data-sym]').forEach((b) =>
+            b.addEventListener('click', () => {
+              Object.assign(f, { symbol: b.dataset.sym, name: b.dataset.name, msg: '' });
+              renderTab();
+            }),
+          );
+        } catch (err) {
+          results.innerHTML = `<li class="msg error">${esc(err.message)}</li>`;
+        }
+      }, 250);
+    });
+  }
+
+  el.querySelector('#queueBuy')?.addEventListener('click', () => {
+    f.confirm = true;
+    renderTab();
+  });
+  el.querySelector('#back')?.addEventListener('click', () => {
+    f.confirm = false;
+    renderTab();
+  });
+  el.querySelector('#confirm')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      const r = await api('/api/trade', { method: 'POST', body: { symbol: f.symbol, side: 'buy', notional_cents: f.tier } });
+      Object.assign(f, { tier: null, symbol: null, name: '', confirm: false });
+      await refresh();
+      f.msg = `Queued. ${r.trade.symbol} sends ${countdown(r.trade.execute_after)}.`;
+      f.error = false;
+      renderTab();
+    } catch (err) {
+      f.confirm = false;
+      renderTab();
+      msg(err.message, true);
+    }
+  });
+
+  el.querySelectorAll('[data-cancel]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        const r = await api('/api/trade/cancel', { method: 'POST', body: { id: b.dataset.cancel } });
+        await refresh();
+        f.msg = `Cancelled. ${fmt(r.trade.notional_cents || 0)} is back in the bank.`;
+        if (r.trade.side === 'sell') f.msg = 'Cancelled the sell.';
+        f.error = false;
+        renderTab();
+      } catch (err) {
+        b.disabled = false;
+        msg(err.message, true);
+      }
+    }),
+  );
+
+  el.querySelectorAll('[data-sell]').forEach((b) => {
+    let armed = null;
+    b.addEventListener('click', async () => {
+      if (!armed) {
+        b.textContent = 'Tap again to queue';
+        armed = setTimeout(() => {
+          armed = null;
+          b.textContent = 'Sell all';
+        }, 3000);
+        return;
+      }
+      clearTimeout(armed);
+      b.disabled = true;
+      try {
+        const r = await api('/api/trade', { method: 'POST', body: { symbol: b.dataset.sell, side: 'sell' } });
+        await refresh();
+        f.msg = `Sell queued. It sends ${countdown(r.trade.execute_after)}. Proceeds go to the bank.`;
+        f.error = false;
+        renderTab();
+      } catch (err) {
+        b.disabled = false;
+        msg(err.message, true);
+      }
+    });
+  });
+
+  S.ticker = setInterval(() => {
+    el.querySelectorAll('[data-count]').forEach((n) => (n.textContent = countdown(n.dataset.count)));
+  }, 30000);
 }
 
 // ---------- boot ----------
