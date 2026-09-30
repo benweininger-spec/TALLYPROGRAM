@@ -20,34 +20,28 @@ const store = makeMemoryStore();
 const broker = makeFakeBroker({ autoFill: true, clock });
 const service = makeService({ store, broker, clock });
 
-// Three weeks of believable history so every screen has something on it.
-// SEED=0 starts empty instead.
+// Three weeks of believable history, like the design's "Three weeks in":
+// three smoked days and two trades. SEED=0 starts empty (day one).
 async function seed(days = 21) {
   offsetMs = -days * DAY;
   await service.ensureInitialized('America/Los_Angeles');
-  let n = 7;
-  const rand = () => ((n = (n * 9301 + 49297) % 233280) / 233280);
+  const dayKey = () => clock().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
   for (let d = days; d >= 1; d--) {
     offsetMs = -d * DAY;
-    if (d === 12) await service.logCraving({ beaten: false });
-    const taps = 2 + Math.floor(rand() * 4);
-    for (let i = 0; i < taps; i++) {
-      offsetMs += 45 * 60000;
-      await service.logCraving({ beaten: true });
-    }
+    await service.getState();
+    if (d === 16 || d === 10 || d === 9) await service.setDay({ day: dayKey(), state: 'smoked' });
     await service.processQueue();
-    if (service.snapshot) await service.snapshot();
-    if (d === 16) await service.requestTrade({ symbol: 'VTI', side: 'buy', notional_cents: 2000 });
-    if (d === 4) await service.requestTrade({ symbol: 'AAPL', side: 'buy', notional_cents: 5000 });
-    if (d === 2) await service.requestTrade({ symbol: 'VOO', side: 'buy', notional_cents: 2000 });
+    if (d === 18) await service.requestTrade({ symbol: 'VOO', side: 'buy', notional_cents: 2000 });
+    if (d === 11) await service.requestTrade({ symbol: 'AAPL', side: 'buy', notional_cents: 5000 });
   }
-  offsetMs = -DAY;
-  await service.processQueue();
   offsetMs = 0;
-  broker.setPrice('VTI', 301.4);
-  broker.setPrice('AAPL', 226.1);
+  await service.processQueue();
+  broker.setPrice('AAPL', 235.4);
+  broker.setPrice('VOO', 551.2);
+  await service.getState();
 }
 if (process.env.SEED !== '0') await seed();
+else await service.ensureInitialized('America/Los_Angeles');
 setDeps({
   auth: { owner: async () => ({ id: 'dev', email: 'dev@localhost' }), cron: () => true },
   service,

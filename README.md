@@ -1,27 +1,39 @@
 # Ciggy Bank
 
-A one-person quit-smoking app. Every craving you beat banks money. Banked money
-unlocks small, capped, long-only stock trades through Alpaca. The build spec is
-`PLAN.md`; where the build deviates from it, `DECISIONS.md` says why.
+A one-person quit-smoking app, dressed as a 1950s newspaper. Every clean day banks
+what a day of smoking used to cost. Banked money unlocks small, capped, long-only
+stock trades through Alpaca. Every smoked day's money goes to a ghost portfolio of
+what could have been. The v1 build spec is `PLAN.md`, the v2 design is described in
+the handoff README it was built from, and `DECISIONS.md` says where the build departs
+from either.
 
 `legacy/` holds the old SB Forge inventory tally tool this repo used to be. It is
 unused and kept only for reference.
 
 ## How it works
 
-- **Now.** Tap "I didn't smoke" when you beat a craving. Each tap banks $3, up to
-  what you used to spend in a day. Past that cap, taps still count but bank nothing.
-  "I smoked" logs a slip, resets the streak, and banks nothing.
+- **Now.** The front page. Every day since the quit date is clean or smoked. A day
+  goes to press at local midnight: a clean day pays pack price × packs per day into
+  the bank, a smoked day pays the same amount into the ghost. Today is pencilled in
+  until then. The **editorial position** switch, I quit or I'm smoking, sets how each
+  day is marked from today on. A **late report** marks today as smoked, or back to
+  clean.
+- **Calendar.** The X-effect index, a month at a time. Tap any past day to print a
+  correction; its money moves between the bank and the ghost, so the two always add
+  up to the full amount since the quit date.
+- **The ghost.** Each smoked day's money is bought, on paper, at that day's close of a
+  benchmark ETF (VOO unless you change it). It moves with the market and can never be
+  spent. Change the benchmark and the whole ghost is repriced.
 - **Trade.** Your bank unlocks tiers of $20, $50, $100, and $200. Pick a tier and a
   stock or ETF. The bank pays immediately and the order waits 24 hours before it goes
   to Alpaca. Cancel any time before then for a full refund. Positions cannot be sold
   for 7 days after the first fill; a sale sells the whole position and returns the
   proceeds to the bank.
-- **Ledgers.** A chart of what cigarettes would have burned against what you have now,
-  bank plus stocks, with trade history.
-- **Settings.** Pack price, quit date, tiers, and the guardrails. Cooldown and hold can
-  go up but never below 24 hours and 7 days. The $20 to $200 range is fixed in code and
-  in the database.
+- **Ledgers.** Burned, yours, and could-have-been, charted daily since the quit
+  date, with daily values and trade history.
+- **Settings.** Quit date, pack price, timezone, ghost benchmark, tiers, and the
+  guardrails. Cooldown and hold can go up but never below 24 hours and 7 days. The $20
+  to $200 range is fixed in code and in the database.
 
 Orders are always market orders for a dollar amount, fractional shares, day only. No
 shorting, margin, options, or crypto.
@@ -37,7 +49,7 @@ magic-link sign-in, Alpaca for orders. No framework and no build step.
 
 ```
 api/            HTTP endpoints, thin wrappers around lib/service.js
-lib/rules.js    every banking and trading rule, as pure functions
+lib/rules.js    every calendar, banking, and trading rule, as pure functions
 lib/service.js  one method per API call
 lib/store/      Postgres store, plus an in-memory twin for tests and preview
 lib/alpaca.js   Alpaca client; lib/broker-fake.js is its test double
@@ -49,8 +61,8 @@ supabase/migrations/  schema, row-level security, single-user lock
 ### 1. Supabase
 
 1. Create a project at supabase.com.
-2. Open the SQL Editor. Paste and run `supabase/migrations/20260930022438_core.sql`, then
-   the `single_user_rls` and `revoke_anon_is_owner` files, in filename order. Or run `DATABASE_URL=... npm run migrate` locally.
+2. Open the SQL Editor and run every file in `supabase/migrations/`, in filename
+   order. Or run `DATABASE_URL=... npm run migrate` locally.
 3. Lock the app to your email:
    ```sql
    insert into private.app_config (allowed_email) values ('you@example.com');
@@ -104,7 +116,8 @@ If you want a clean start, truncate `trade_requests` and `positions` before swit
 ```
 npm install
 npm test        # needs a local Postgres for the database half; skips it otherwise
-npm run dev     # http://localhost:3000 with fake data, fake broker, no sign-in
+npm run dev     # http://localhost:3000: three weeks of fake data, fake broker, no sign-in
+SEED=0 npm run dev   # the same, on day one
 ```
 
 Tests run every rule and service path against both the in-memory store and a real

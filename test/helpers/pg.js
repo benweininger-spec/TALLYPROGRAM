@@ -34,7 +34,7 @@ const SUPABASE_STUB = `
   alter default privileges in schema public grant select, insert, update, delete on tables to anon, authenticated;
 `;
 
-export async function freshDatabase() {
+export async function freshDatabase({ migrationsDir } = {}) {
   const name = `ciggy_t_${randomBytes(4).toString('hex')}`;
   const admin = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
   await admin.unsafe(`create database ${name}`);
@@ -43,7 +43,7 @@ export async function freshDatabase() {
   const setup = postgres(url, { max: 1, onnotice: () => {} });
   await setup.unsafe(SUPABASE_STUB);
   await setup.end();
-  await migrate(url, { log: () => {} });
+  await migrate(url, { log: () => {}, ...(migrationsDir ? { dir: migrationsDir } : {}) });
   return {
     url,
     async drop() {

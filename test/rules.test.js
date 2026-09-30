@@ -8,17 +8,6 @@ const s = resolveSettings({ quit_date: '2026-10-01' });
 const asset = { symbol: 'VTI', class: 'us_equity', status: 'active', tradable: true, fractionable: true };
 const buy = (over) => rules.validateBuy({ notionalCents: 5000, bankCents: 10000, asset, settings: s, ...over });
 
-test('daily credit cap: credits until the cap, then the remainder, then nothing', () => {
-  assert.equal(s.daily_credit_cap_cents, 1200);
-  const c = (today) => rules.creditForCraving({ beaten: true, todayCreditedCents: today, settings: s });
-  assert.equal(c(0), 300);
-  assert.equal(c(900), 300);
-  assert.equal(c(1000), 200);
-  assert.equal(c(1200), 0);
-  assert.equal(c(5000), 0);
-  assert.equal(rules.creditForCraving({ beaten: false, todayCreditedCents: 0, settings: s }), 0);
-});
-
 test('unlocked tiers are the tiers the bank covers', () => {
   assert.deepEqual(rules.unlockedTiers(0, s), []);
   assert.deepEqual(rules.unlockedTiers(4999, s), [2000]);
@@ -94,13 +83,64 @@ test('applyFill: averages cost, keeps first fill time, closes at zero', () => {
   assert.equal(rules.applyFill('VTI', p2, { qty: -0.2, price: 310 }, t2), null);
 });
 
-test('day count and streak', () => {
+test('day count', () => {
   assert.equal(rules.dayCount('2026-10-01', '2026-10-01'), 1);
   assert.equal(rules.dayCount('2026-10-01', '2026-10-10'), 10);
-  assert.equal(rules.streakDays({ quitDay: '2026-10-01', today: '2026-10-10', lastSlipDay: null }), 10);
-  assert.equal(rules.streakDays({ quitDay: '2026-10-01', today: '2026-10-10', lastSlipDay: '2026-10-10' }), 0);
-  assert.equal(rules.streakDays({ quitDay: '2026-10-01', today: '2026-10-10', lastSlipDay: '2026-10-07' }), 3);
-  assert.equal(rules.streakDays({ quitDay: '2026-10-05', today: '2026-10-10', lastSlipDay: '2026-09-20' }), 6);
+  assert.equal(rules.dayCount(null, '2026-10-10'), 0);
+});
+
+test('calendar: past days as stored, today pencilled from the mode', () => {
+  const rows = [
+    { day: '2026-09-09', state: 'clean', source: 'auto', cents: 1200, settled_at: new Date() },
+    { day: '2026-09-10', state: 'smoked', source: 'edit', cents: 1200, settled_at: new Date() },
+  ];
+  const cal = rules.calendar({ quitDay: '2026-09-09', today: '2026-09-11', rows, mode: 'smoking' });
+  assert.deepEqual(cal.map((d) => [d.day, d.state, d.settled, d.today]), [
+    ['2026-09-09', 'clean', true, false],
+    ['2026-09-10', 'smoked', true, false],
+    ['2026-09-11', 'smoked', false, true],
+  ]);
+  const pencilled = [...rows, { day: '2026-09-11', state: 'clean', source: 'edit', cents: null, settled_at: null }];
+  assert.equal(rules.calendar({ quitDay: '2026-09-09', today: '2026-09-11', rows: pencilled, mode: 'smoking' }).at(-1).state, 'clean');
+  assert.deepEqual(rules.calendar({ quitDay: '2026-09-12', today: '2026-09-11', rows, mode: 'quit' }), []);
+});
+
+test('days to settle: every past day without a settled row, never today', () => {
+  const rows = [
+    { day: '2026-09-09', settled_at: new Date() },
+    { day: '2026-09-11', settled_at: null },
+  ];
+  assert.deepEqual(rules.daysToSettle({ quitDay: '2026-09-09', today: '2026-09-12', rows }), ['2026-09-10', '2026-09-11']);
+  assert.deepEqual(rules.daysToSettle({ quitDay: '2026-09-12', today: '2026-09-12', rows: [] }), []);
+});
+
+test('streak counts clean days back from today', () => {
+  const d = (...states) => states.map((state) => ({ state }));
+  assert.equal(rules.streak(d('clean', 'smoked', 'clean', 'clean')), 2);
+  assert.equal(rules.streak(d('clean', 'clean', 'smoked')), 0);
+  assert.equal(rules.streak(d('clean')), 1);
+  assert.equal(rules.streak([]), 0);
+});
+
+test('day edits: only from the quit date through today', () => {
+  const ok = { today: '2026-09-12', quitDay: '2026-09-09' };
+  assert.doesNotThrow(() => rules.validateDayEdit({ ...ok, day: '2026-09-09' }));
+  assert.doesNotThrow(() => rules.validateDayEdit({ ...ok, day: '2026-09-12' }));
+  assert.throws(() => rules.validateDayEdit({ ...ok, day: '2026-09-13' }), { code: 'future_day' });
+  assert.throws(() => rules.validateDayEdit({ ...ok, day: '2026-09-08' }), { code: 'before_quit' });
+  assert.throws(() => rules.validateDayEdit({ ...ok, day: '2026-02-30' }), { code: 'bad_day' });
+  assert.throws(() => rules.normalizeDayState('meh'), { code: 'bad_state' });
+});
+
+test('ghost: closes carry over weekends; lots value at cost until priced', () => {
+  const bars = [{ day: '2026-09-18', close: 500 }, { day: '2026-09-21', close: 510 }];
+  assert.equal(rules.closeOnOrBefore(bars, '2026-09-20'), 500);
+  assert.equal(rules.closeOnOrBefore(bars, '2026-09-21'), 510);
+  assert.equal(rules.closeOnOrBefore(bars, '2026-09-17'), null);
+  assert.equal(rules.lotShares(1200, 500), '0.024');
+  assert.equal(rules.lotValueCents({ cents: 1200, shares: '0.024' }, 550), 1320);
+  assert.equal(rules.lotValueCents({ cents: 1200, shares: null }, 550), 1200);
+  assert.equal(rules.lotValueCents({ cents: 1200, shares: '0.024' }, null), 1200);
 });
 
 test('local days follow the user timezone across DST', () => {
@@ -115,6 +155,10 @@ test('settings: guardrails can tighten but not loosen', () => {
   assert.throws(() => validateSettingsPatch({ cooldown_hours: 1 }), { code: 'bad_setting' });
   assert.throws(() => validateSettingsPatch({ hold_days: 0 }), { code: 'bad_setting' });
   assert.throws(() => validateSettingsPatch({ tiers_cents: [2000, 50000] }), { code: 'bad_setting' });
-  assert.throws(() => validateSettingsPatch({ daily_credit_cap_cents: 99999 }), { code: 'bad_setting' });
+  assert.throws(() => validateSettingsPatch({ daily_cents: 99999 }), { code: 'bad_setting' });
+  assert.throws(() => validateSettingsPatch({ mode: 'smoking' }), { code: 'bad_setting' });
+  assert.deepEqual(validateSettingsPatch({ ghost_benchmark: ' qqq ' }), { ghost_benchmark: 'QQQ' });
+  assert.throws(() => validateSettingsPatch({ ghost_benchmark: 'not a ticker' }), { code: 'bad_setting' });
+  assert.equal(resolveSettings({ pack_price_cents: 1350, packs_per_day: 1.5 }).daily_cents, 2025);
   assert.deepEqual(validateSettingsPatch({ tiers_cents: [5000, 2000, 5000] }), { tiers_cents: [2000, 5000] });
 });

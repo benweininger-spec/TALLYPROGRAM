@@ -16,6 +16,8 @@ forEachStore('trading', (ctx) => {
     broker = makeFakeBroker({ ...opts, clock: () => now });
     svc = makeService({ store: ctx.store, broker, clock: () => now });
     await svc.ensureInitialized('America/Los_Angeles');
+    // Days go to the ghost, so the bank holds only what each test puts in.
+    await svc.setMode('smoking');
     if (bankCents) {
       await ctx.store.tx((r) => r.insertLedger({ occurred_at: now, delta_cents: bankCents, kind: 'adjust' }));
     }

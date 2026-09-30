@@ -7,7 +7,8 @@ import { makeMemoryStore } from '../lib/store/memory.js';
 import { makeFakeBroker } from '../lib/broker-fake.js';
 import { makeService } from '../lib/service.js';
 import state from '../api/state.js';
-import craving from '../api/craving.js';
+import day from '../api/day.js';
+import mode from '../api/mode.js';
 import trade from '../api/trade/index.js';
 import cancel from '../api/trade/cancel.js';
 import cron from '../api/cron/execute-queue.js';
@@ -37,8 +38,8 @@ async function call(handler, { method = 'GET', token = 'good', body, url = '/' }
 }
 
 test('every user endpoint requires the owner', async () => {
-  for (const h of [state, craving, trade, cancel]) {
-    const method = h === state ? 'GET' : 'POST';
+  for (const h of [state, day, mode, trade, cancel]) {
+    const method = h === state ? 'GET' : h === day || h === mode ? 'PUT' : 'POST';
     assert.equal((await call(h, { method, token: null })).statusCode, 401);
     assert.equal((await call(h, { method, token: 'bad' })).statusCode, 401);
     assert.equal((await call(h, { method, token: 'other' })).statusCode, 403);
@@ -58,10 +59,26 @@ test('rule violations come back as 400 with a code', async () => {
   assert.equal(bad.body.error, 'bad_json');
 });
 
-test('wrong method is 405, and a craving round-trips', async () => {
-  assert.equal((await call(craving, { method: 'GET' })).statusCode, 405);
-  const r = await call(craving, { method: 'POST', body: { beaten: true } });
+test('wrong method is 405; a late report and a mode change round-trip', async () => {
+  assert.equal((await call(day, { method: 'POST' })).statusCode, 405);
+  const st = await call(state);
+  const today = st.body.today;
+  const r = await call(day, { method: 'PUT', body: { day: today, state: 'smoked' } });
   assert.equal(r.statusCode, 200);
-  assert.equal(r.body.credited_cents, 300);
+  assert.equal(r.body.today_state, 'smoked');
   assert.equal(r.headers['cache-control'], 'no-store');
+  const m = await call(mode, { method: 'PUT', body: { mode: 'smoking' } });
+  assert.equal(m.body.mode, 'smoking');
+  const bad = await call(mode, { method: 'PUT', body: { mode: 'sometimes' } });
+  assert.equal(bad.statusCode, 400);
+  assert.equal(bad.body.error, 'bad_mode');
+});
+
+import { isSecretKey } from '../lib/deps.js';
+test('secret Supabase keys are never treated as browser-safe', () => {
+  const jwt = (role) => `x.${Buffer.from(JSON.stringify({ role })).toString('base64url')}.y`;
+  assert.equal(isSecretKey('sb_secret_abc'), true);
+  assert.equal(isSecretKey(jwt('service_role')), true);
+  assert.equal(isSecretKey(jwt('anon')), false);
+  assert.equal(isSecretKey('sb_publishable_abc'), false);
 });
