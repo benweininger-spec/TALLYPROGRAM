@@ -1,0 +1,17 @@
+{
+  "name": "ciggy-bank",
+  "private": true,
+  "type": "module",
+  "description": "Quit-smoking craving bank that unlocks small, capped, long-only stock trades.",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "dev": "node scripts/dev-server.js",
+    "migrate": "node scripts/migrate.js"
+  },
+  "dependencies": {
+    "postgres": "^3.4.9"
+  }
+}
