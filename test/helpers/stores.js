@@ -25,7 +25,7 @@ export function forEachStore(title, body) {
       store = makePgStore(db.url);
     });
     beforeEach(async () => {
-      await raw`truncate settings, cravings, bank_ledger, trade_requests, positions, snapshots, days, ghost_lots, price_closes`;
+      await raw`truncate settings, cravings, bank_ledger, trade_requests, positions, snapshots, days, ghost_lots, price_closes, editions`;
       ctx.store = store;
     });
     after(async () => {
