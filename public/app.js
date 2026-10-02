@@ -99,11 +99,13 @@ function V() {
     colGap: wide ? '28px' : '12px',
     nowCols: three ? 'minmax(0,1fr) minmax(0,1.35fr) minmax(0,1fr)' : 'minmax(0,1.1fr) minmax(0,1fr)',
     // Single quotes: these land inside a double-quoted style attribute.
+    // The Market Page runs full width under the lead story on wide pages,
+    // so its three rungs get three columns; on a phone it follows the index.
     nowAreas: three
-      ? "'story bank toggle' 'story bank late' 'story week class' 'ghost week class'"
+      ? "'story bank toggle' 'story bank late' 'market market market' 'ghost week class'"
       : wide
-        ? "'story bank' 'story toggle' 'story late' 'week week' 'ghost class'"
-        : "'story bank' 'toggle toggle' 'week week' 'class class' 'ghost ghost' 'late late'",
+        ? "'story bank' 'story toggle' 'story late' 'market market' 'week week' 'ghost class'"
+        : "'story bank' 'toggle toggle' 'week week' 'market market' 'class class' 'ghost ghost' 'late late'",
     rowGap: wide ? '18px' : '0px',
     storyFs: three ? '16px' : wide ? '14px' : '11px',
     tableFs: wide ? '14px' : '10.5px',
@@ -487,6 +489,8 @@ function screenNow(st, v) {
       <div class="cells">${week.join('')}</div>
     </div>
 
+    ${marketPage(st, v)}
+
     <div class="classcol" style="margin-top:${v.blockTop};border-left:${v.sideRule};padding-left:${v.sidePad};font-size:${v.smallFs}">
       ${fp.classifieds.map((a) => `<p><b>${esc(a.head)}</b> — ${esc(a.body)}</p>`).join('')}
     </div>
@@ -503,6 +507,44 @@ function screenNow(st, v) {
       </button>
     </div>
   </section>`;
+}
+
+// ---------- The Market Page ----------
+// Written each weekday morning by the daily job. Opening the app never
+// writes one: without today's, yesterday's runs as a late edition.
+const RUNG_LABEL = { index: 'The Index', sector: 'The Sector', name: 'The Name' };
+function marketPage(st, v) {
+  const ed = st.editions?.today || st.editions?.previous;
+  if (!ed) return '';
+  const c = ed.content;
+  const late = !st.editions.today;
+  const kicker = !late
+    ? 'The Market Page · Morning edition'
+    : `Late edition · ${ed.day === addDays(st.today, -1) ? 'yesterday' : WDN[parseDay(ed.day).getDay()]}'s page`;
+  const tier = st.unlocked_tiers.length ? Math.min(...st.unlocked_tiers) : null;
+  const rungs = ['index', 'sector', 'name']
+    .map((r) => {
+      const pk = c.rungs[r];
+      return `<div class="rung">
+        <div class="rl">${RUNG_LABEL[r]}</div>
+        <div class="rt">${esc(pk.symbol)}</div>
+        <div class="rn">${esc(pk.name)}</div>
+        <p class="note">${esc(pk.note)}</p>
+        ${tier
+          ? `<button class="btn-outline" data-act="queueRung" data-arg="${esc(pk.symbol)}" data-name="${esc(pk.name)}">Queue ${whole(tier)}</button>`
+          : '<button class="btn-outline" disabled>Bank more</button>'}
+      </div>`;
+    })
+    .join('');
+  return `<div class="marketcol" style="margin-top:${v.blockTop}">
+    <div class="mp-kicker">${esc(kicker)}</div>
+    <h2 class="mp-head" style="font-size:${v.ghostHeadFs}">${esc(c.headline)}</h2>
+    <p class="mp-deck">${esc(c.deck)}</p>
+    <div class="mp-report" style="font-size:${v.storyFs};column-count:${v.three ? 2 : 1}">${c.report.map((p) => `<p>${esc(p)}</p>`).join('')}</div>
+    <div class="rungs" style="grid-template-columns:${v.wide ? 'repeat(3, minmax(0, 1fr))' : 'minmax(0, 1fr)'}">${rungs}</div>
+    ${c.closing_note ? `<p class="mp-close">${esc(c.closing_note)}</p>` : ''}
+    <p class="mp-rule">${esc(st.editions.standing_rule)}</p>
+  </div>`;
 }
 
 // ---------- Calendar ----------
@@ -1070,6 +1112,10 @@ function screenSettings(st, v) {
       <p class="body13">Each smoked day's ${esc(dailyStr(st.daily_cents))} is bought at that day's close, as if you'd saved it. Change the ticker and the whole ghost is redrawn, retroactively, like a good biography.</p>
       <div class="lbl" style="margin-top:8px">Broker</div>
       <div class="broker"><span>Alpaca</span><span>${brokerLine}</span></div>
+      <div class="lbl" style="margin-top:8px">The Market Page</div>
+      <label class="field"><span>Universe · one per line: ticker, rung, name</span>
+        <textarea class="inp area" name="market_universe" rows="9" spellcheck="false" autocapitalize="off" autocomplete="off">${esc(universeText(s.market_universe))}</textarea></label>
+      <p class="body13">The only tickers the paper may print. Rungs are index, sector, and name, at least one of each.</p>
     </div>
     <div class="col">
       <div class="lbl">Trading rules</div>
@@ -1086,6 +1132,19 @@ function screenSettings(st, v) {
   </form>`;
 }
 
+const universeText = (list) => list.map((u) => `${u.symbol} ${u.rung} ${u.name}`).join('\n');
+// "VOO index Vanguard S&P 500 ETF" per line. The server validates the rest.
+function parseUniverse(text) {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [symbol, rung = '', ...name] = l.split(/\s+/);
+      return { symbol: symbol.toUpperCase(), rung: rung.toLowerCase(), name: name.join(' ') || symbol.toUpperCase() };
+    });
+}
+
 async function saveSettings(form) {
   const s = S.state.settings;
   const val = Object.fromEntries(new FormData(form));
@@ -1098,6 +1157,7 @@ async function saveSettings(form) {
     tiers_cents: val.tiers_cents.split(/[\s,$]+/).filter(Boolean).map(toCents),
     cooldown_hours: Number(val.cooldown_hours),
     hold_days: Number(val.hold_days),
+    market_universe: parseUniverse(val.market_universe || ''),
   };
   for (const [k, x] of Object.entries(patch)) if (JSON.stringify(x) === JSON.stringify(s[k])) delete patch[k];
   if (!Object.keys(patch).length) {
@@ -1206,6 +1266,14 @@ const ACT = {
     const tab = S.tab;
     const work = tab === 'ledgers' ? Promise.all([refresh(), refreshHistory()]) : refresh();
     work.then(() => S.tab === tab && !S.editDay && !S.confirmMode && render()).catch(() => {});
+  },
+  // A rung's button: the order form, prefilled with the smallest unlocked
+  // tier and that ticker. Nothing is queued until the reader confirms.
+  queueRung(el) {
+    const tiers = S.state.unlocked_tiers;
+    if (!tiers.length) return;
+    S.trade = { ...S.trade, tier: Math.min(...tiers), symbol: el.dataset.arg, name: el.dataset.name || '', confirm: false, msg: '', error: false };
+    ACT.tab({ dataset: { arg: 'trade' } });
   },
   edit(el) {
     S.editDay = el.dataset.arg;

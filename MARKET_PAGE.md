@@ -32,6 +32,12 @@ below except editions in the `editions` table; until the job runs, production sh
 an empty record. See "Trading against saving, and the paper's record" in
 `DECISIONS.md`.
 
+## Built (Opus)
+
+Sections 1 to 5 below are built as specified, with the changes listed under "The
+Market Page, built" in `DECISIONS.md`. The production checklist is in the README:
+add `ANTHROPIC_API_KEY`, redeploy, and call the job once.
+
 ## To build (Opus)
 
 ### 1. Market data: `broker.getNews()` and a bars helper

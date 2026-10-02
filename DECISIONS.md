@@ -179,3 +179,45 @@ at each smoked day's close, paper theme only. These are the calls it left open.
   rotated through the universe, and adds a sale at a small gain and a holding at a
   small loss. The fake broker now lists the whole default universe, and its closes
   depend only on the date, so a close is the same whenever it is fetched.
+
+## The Market Page, built
+
+Built to `MARKET_PAGE.md`, with the editorial contract in `lib/edition.js` used as
+written. Where the build differs from the spec:
+
+- **The schema goes through the SDK's JSON-schema helper.** Structured outputs do
+  not take `maxItems`, so the helper moves it into the field's description;
+  `$defs` and `$ref` pass through. `validateEdition` still enforces one to three
+  paragraphs. `EDITION_SCHEMA` itself is unchanged.
+- **Parsing is lenient so the stop reason speaks.** A refusal or a reply cut off at
+  `max_tokens` is not JSON, and the SDK's parser would throw a parse error first.
+  The format's parser returns nothing instead; then a refusal, a cut-off reply, or
+  an empty one is a spiked draft and gets the one retry.
+- **The prompt-cache marker is set but saves nothing today.** The voice prompt is
+  about 500 tokens, under the smallest prompt the API will cache. At one call a
+  day it does not matter.
+- **"Yesterday" is the last edition before today**, not the calendar day before. On
+  a Monday, Friday's rungs are the ones the page must not repeat.
+- **Only a failed writer or no closes at all stop the presses.** A ticker whose bars
+  fail is left out of the prompt. Failed headlines leave the page saying the wire was
+  quiet, as the voice prompt asks. Any other writer error (no key, API down) goes
+  straight to the fallback without a retry. The fallback names what was missing in
+  the paper's words; the technical reason is kept in `spiked`.
+- **The fallback is checked without yesterday's page.** It always prints the first
+  ticker at each rung, so two fallback days in a row would otherwise reject
+  themselves. Its model is recorded as `fallback`.
+- **A spiked day is not final.** Calling the job again retries it. A clean edition
+  is never redone, and a fallback never overwrites one written by a concurrent run.
+- **On wide pages the Market Page runs full width under the lead story**, not in
+  the story column. The story column is too narrow for three rung columns; on a
+  phone it sits between the X-Effect Index and the classifieds as specified.
+- **The rung button says the smallest unlocked tier** ("Queue $20" by default) and
+  fills in the order form. Nothing is queued until the reader confirms.
+- **The cron function may run up to 300 seconds.** Two Opus drafts plus the data
+  fetch can pass the old 10-second default. The setting applies to all three jobs.
+- **No edition is written on opening the app.** Before the morning run, the last
+  edition shows as a late edition. With none at all, the page does not appear.
+- **The model sees only** the universe, six closes per ticker, up to 20 headlines
+  tagged with universe tickers, the reader's held tickers, and the last rungs.
+  Never balances, amounts, names, or the email address.
+

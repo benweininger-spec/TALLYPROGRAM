@@ -12,6 +12,7 @@
     "migrate": "node scripts/migrate.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "postgres": "^3.4.9"
   }
 }
