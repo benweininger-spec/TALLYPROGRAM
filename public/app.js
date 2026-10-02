@@ -657,13 +657,13 @@ function screenLedgers(st, v) {
     <div class="figs">
       <div class="fig"><div class="k"><i style="border-color:#22335E"></i>Burned</div><div class="v" style="color:#22335E">−${fmt(st.burned_cents)}</div><div class="s">had you kept at it</div></div>
       <div class="fig"><div class="k"><i style="border-color:#C0321F"></i>Yours</div><div class="v" style="color:#C0321F">${fmt(yours)}</div><div class="s">bank ${fmt(st.bank_cents)} · stocks ${fmt(st.portfolio_cents)}${st.queued_cents ? ` · queued ${fmt(st.queued_cents)}` : ''}</div></div>
-      <div class="fig"><div class="k"><i style="border-color:#7A7266;border-top-style:dashed"></i>Could-have-been</div><div class="v" style="color:#7A7266">${fmt(ghost)}</div><div class="s">${lots ? `${lots} smoked ${plural(lots, 'day', 'days')}, in ${esc(bench)}` : 'nothing smoked, nothing lost'}</div></div>
+      <div class="fig"><div class="k"><i style="border-color:#7A7266;border-top-style:dashed"></i>Could-have-been</div><div class="v" style="color:#7A7266">${fmt(ghost)}</div><div class="s">${lots ? `${lots} smoked ${plural(lots, 'day', 'days')}, in ${esc(bench)}` : 'nothing smoked, nothing lost'}</div>${lots ? `<div class="s" style="font-style:normal;color:#5E554A">${fmt(yours + ghost)} had every day been clean</div>` : ''}</div>
     </div>
 
     <div class="figbox">
       <div class="t">Fig. 1 · The three sums, daily, since the quit date</div>
       <div class="chart" id="chart">${h ? '' : '<p class="body13">Setting the figure…</p>'}</div>
-      ${lots === 0 ? '<p class="nog">The ghost line lies flat on zero. Nothing smoked, nothing to haunt.</p>' : ''}
+      ${lots === 0 ? '<p class="nog">The ghost line lies on top of yours. Nothing smoked, nothing to haunt.</p>' : ''}
     </div>
 
     <div class="lower" style="grid-template-columns:${v.ledgerCols};gap:22px ${v.colGap}">
@@ -710,7 +710,10 @@ function drawChart(box) {
   const burned = days.map((d) => -d.burned_cents);
   const yours = days.map((d) => d.yours_cents ?? 0);
   const ghost = days.map((d) => d.ghost_cents ?? 0);
-  const vals = [...burned, ...yours, ...ghost, 0];
+  // Stacked on Yours: the dashed line is what Yours would be had every
+  // smoked day been clean. The gap between the two is the ghost.
+  const stacked = yours.map((v, i) => v + ghost[i]);
+  const vals = [...burned, ...stacked, 0];
   let lo = Math.min(...vals);
   let hi = Math.max(...vals);
   if (hi - lo < 1000) hi = lo + 1000;
@@ -730,6 +733,8 @@ function drawChart(box) {
   const label = (val) => (val === 0 ? '$0' : `${val < 0 ? '−' : ''}$${Math.abs(val / 100).toLocaleString('en-US')}`);
   const line = (arr) => arr.map((val, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(val).toFixed(1)}`).join('');
   const area = (arr) => (n < 2 ? '' : `M${x(0).toFixed(1)},${y(0).toFixed(1)}` + arr.map((val, i) => `L${x(i).toFixed(1)},${y(val).toFixed(1)}`).join('') + `L${x(last).toFixed(1)},${y(0).toFixed(1)}Z`);
+  // The region between two series, lower drawn back to front.
+  const band = (lo, hi) => (n < 2 ? '' : hi.map((val, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(val).toFixed(1)}`).join('') + [...lo.keys()].reverse().map((i) => `L${x(i).toFixed(1)},${y(lo[i]).toFixed(1)}`).join('') + 'Z');
   const xi = n === 1 ? [0] : [...new Set([0, Math.floor(last / 2), last])];
   const today = S.state.today;
   const dayName = (i) => (days[i].day === today ? 'TODAY' : ap(days[i].day).toUpperCase());
@@ -737,15 +742,16 @@ function drawChart(box) {
   box.innerHTML = `
     ${grid.map((val) => `<span class="yl" style="top:${(y(val) - 5).toFixed(1)}px">${label(val)}</span>`).join('')}
     ${xi.map((i) => `<span class="xl" style="left:${x(i).toFixed(1)}px;transform:${n === 1 ? 'translateX(-50%)' : i === 0 ? 'none' : i === last ? 'translateX(-100%)' : 'translateX(-50%)'}">${dayName(i)}</span>`).join('')}
-    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" tabindex="0" aria-label="Burned, yours and could-have-been over ${n} ${plural(n, 'day', 'days')}. Burned ${fmt(burned[last])}, yours ${fmt(yours[last])}, could-have-been ${fmt(ghost[last])}. Use arrow keys to read each day.">
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" tabindex="0" aria-label="Burned, yours, and yours had every day been clean, over ${n} ${plural(n, 'day', 'days')}. Burned ${fmt(burned[last])}, yours ${fmt(yours[last])}, had every day been clean ${fmt(stacked[last])}. Use arrow keys to read each day.">
       ${grid.map((val) => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(val).toFixed(1)}" y2="${y(val).toFixed(1)}" stroke="${val === 0 ? '#1B1712' : '#D6C8A6'}" stroke-width="${val === 0 ? 1.2 : 1}"/>`).join('')}
       <path d="${area(burned)}" fill="#22335E" opacity=".08"/>
       <path d="${area(yours)}" fill="#C0321F" opacity=".1"/>
       <path d="${line(burned)}" fill="none" stroke="#22335E" stroke-width="2" stroke-linejoin="round"/>
-      <path d="${line(ghost)}" fill="none" stroke="#7A7266" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round"/>
+      <path d="${band(yours, stacked)}" fill="#7A7266" opacity=".12"/>
+      <path d="${line(stacked)}" fill="none" stroke="#7A7266" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round"/>
       <path d="${line(yours)}" fill="none" stroke="#C0321F" stroke-width="2.4" stroke-linejoin="round"/>
       <circle cx="${x(last).toFixed(1)}" cy="${y(burned[last]).toFixed(1)}" r="4" fill="#22335E"/>
-      <circle cx="${x(last).toFixed(1)}" cy="${y(ghost[last]).toFixed(1)}" r="4" fill="#7A7266"/>
+      <circle cx="${x(last).toFixed(1)}" cy="${y(stacked[last]).toFixed(1)}" r="4" fill="#7A7266"/>
       <circle cx="${x(last).toFixed(1)}" cy="${y(yours[last]).toFixed(1)}" r="4.5" fill="#C0321F"/>
       <g class="cross" display="none">
         <line class="cl" y1="${m.t}" y2="${H - m.b}" stroke="#5E554A" stroke-width="1"/>
@@ -768,7 +774,7 @@ function drawChart(box) {
     cross.setAttribute('display', 'inline');
     set('.cl', 'x1', cx);
     set('.cl', 'x2', cx);
-    for (const [sel, arr] of [['.cb', burned], ['.cg', ghost], ['.cy', yours]]) {
+    for (const [sel, arr] of [['.cb', burned], ['.cg', stacked], ['.cy', yours]]) {
       set(sel, 'cx', cx);
       set(sel, 'cy', y(arr[idx]));
     }
@@ -777,7 +783,8 @@ function drawChart(box) {
     head.className = 'h';
     head.textContent = days[idx].day === today ? 'Today' : `${wd3(days[idx].day)}. ${ap(days[idx].day)}`;
     tip.append(head);
-    for (const [label, val, color, dash] of [['Yours', yours[idx], '#C0321F', false], ['Could-have-been', ghost[idx], '#7A7266', true], ['Burned', burned[idx], '#22335E', false]]) {
+    for (const [label, val, color, dash] of [['Had every day been clean', stacked[idx], '#7A7266', true], ['Yours', yours[idx], '#C0321F', false], ['of it could-have-been', ghost[idx], '#7A7266', true], ['Burned', burned[idx], '#22335E', false]]) {
+      if (label.startsWith('of it') && !ghost[idx]) continue;
       const row = document.createElement('div');
       row.className = 'r';
       const key = document.createElement('i');
