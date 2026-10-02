@@ -24,7 +24,7 @@ const opts = { skip: !available && 'no local Postgres' };
 test('migrations are idempotent', opts, async () => {
   await migrate(db.url, { log: () => {} });
   const rows = await sql`select name from private.schema_migrations order by name`;
-  assert.deepEqual(rows.map((r) => r.name), ['20260930022438_core.sql', '20260930022510_single_user_rls.sql', '20260930023454_revoke_anon_is_owner.sql', '20260930204845_calendar_and_ghost.sql']);
+  assert.deepEqual(rows.map((r) => r.name), ['20260930022438_core.sql', '20260930022510_single_user_rls.sql', '20260930023454_revoke_anon_is_owner.sql', '20260930204845_calendar_and_ghost.sql', '20261001003300_market_page.sql']);
 });
 
 test('only the allowed email can sign up', opts, async () => {

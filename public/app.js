@@ -32,6 +32,16 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const num = (c) => (Math.abs(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (c) => `${c < 0 ? '−' : ''}$${num(c)}`;
 const whole = (c) => `${c < 0 ? '−' : ''}$${Math.round(Math.abs(c) / 100).toLocaleString('en-US')}`;
+// Signed money and percentages for gains: +$0.84, −$0.12, $0.00; +1.68%.
+const sfmt = (c) => `${c > 0 ? '+' : ''}${fmt(c)}`;
+const pct = (x, dp = 2) => {
+  if (x == null || !Number.isFinite(x)) return '–';
+  const r = Math.round(x * 100 * 10 ** dp) / 10 ** dp;
+  return `${r > 0 ? '+' : r < 0 ? '−' : ''}${Math.abs(r).toFixed(dp)}%`;
+};
+const UP = '#2E6B45';
+const DOWN = '#8E1F16';
+const gainColor = (c) => (c > 0 ? UP : c < 0 ? DOWN : '#1B1712');
 const ord = (n) => {
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;
@@ -89,11 +99,13 @@ function V() {
     colGap: wide ? '28px' : '12px',
     nowCols: three ? 'minmax(0,1fr) minmax(0,1.35fr) minmax(0,1fr)' : 'minmax(0,1.1fr) minmax(0,1fr)',
     // Single quotes: these land inside a double-quoted style attribute.
+    // The Market Page runs full width under the lead story on wide pages,
+    // so its three rungs get three columns; on a phone it follows the index.
     nowAreas: three
-      ? "'story bank toggle' 'story bank late' 'story week class' 'ghost week class'"
+      ? "'story bank toggle' 'story bank late' 'market market market' 'ghost week class'"
       : wide
-        ? "'story bank' 'story toggle' 'story late' 'week week' 'ghost class'"
-        : "'story bank' 'toggle toggle' 'week week' 'class class' 'ghost ghost' 'late late'",
+        ? "'story bank' 'story toggle' 'story late' 'market market' 'week week' 'ghost class'"
+        : "'story bank' 'toggle toggle' 'week week' 'market market' 'class class' 'ghost ghost' 'late late'",
     rowGap: wide ? '18px' : '0px',
     storyFs: three ? '16px' : wide ? '14px' : '11px',
     tableFs: wide ? '14px' : '10.5px',
@@ -113,9 +125,9 @@ function V() {
 function watchLayout() {
   const apply = () => {
     const next = layoutFor(document.documentElement.clientWidth || window.innerWidth);
+    document.documentElement.dataset.layout = next;
     if (next !== S.layout) {
       S.layout = next;
-      document.documentElement.dataset.layout = next;
       if (S.state) render();
     }
   };
@@ -373,21 +385,23 @@ function render() {
 }
 
 function afterRender() {
+  S.chartRO?.forEach((ro) => ro.disconnect());
+  S.chartRO = [];
   if (S.tab === 'ledgers') {
-    const box = $app.querySelector('#chart');
-    if (box) {
-      drawChart(box);
-      S.chartRO?.disconnect();
-      if (typeof ResizeObserver !== 'undefined') {
-        let w = box.clientWidth;
-        S.chartRO = new ResizeObserver(() => {
-          if (box.clientWidth !== w) {
-            w = box.clientWidth;
-            drawChart(box);
-          }
-        });
-        S.chartRO.observe(box);
-      }
+    for (const [id, draw] of [['#chart', drawChart], ['#rchart', drawRecordChart]]) {
+      const box = $app.querySelector(id);
+      if (!box) continue;
+      draw(box);
+      if (typeof ResizeObserver === 'undefined') continue;
+      let w = box.clientWidth;
+      const ro = new ResizeObserver(() => {
+        if (box.clientWidth !== w) {
+          w = box.clientWidth;
+          draw(box);
+        }
+      });
+      ro.observe(box);
+      S.chartRO.push(ro);
     }
   }
   const dlg = $app.querySelector('.dialog [data-focus]');
@@ -475,6 +489,8 @@ function screenNow(st, v) {
       <div class="cells">${week.join('')}</div>
     </div>
 
+    ${marketPage(st, v)}
+
     <div class="classcol" style="margin-top:${v.blockTop};border-left:${v.sideRule};padding-left:${v.sidePad};font-size:${v.smallFs}">
       ${fp.classifieds.map((a) => `<p><b>${esc(a.head)}</b> — ${esc(a.body)}</p>`).join('')}
     </div>
@@ -491,6 +507,44 @@ function screenNow(st, v) {
       </button>
     </div>
   </section>`;
+}
+
+// ---------- The Market Page ----------
+// Written each weekday morning by the daily job. Opening the app never
+// writes one: without today's, yesterday's runs as a late edition.
+const RUNG_LABEL = { index: 'The Index', sector: 'The Sector', name: 'The Name' };
+function marketPage(st, v) {
+  const ed = st.editions?.today || st.editions?.previous;
+  if (!ed) return '';
+  const c = ed.content;
+  const late = !st.editions.today;
+  const kicker = !late
+    ? 'The Market Page · Morning edition'
+    : `Late edition · ${ed.day === addDays(st.today, -1) ? 'yesterday' : WDN[parseDay(ed.day).getDay()]}'s page`;
+  const tier = st.unlocked_tiers.length ? Math.min(...st.unlocked_tiers) : null;
+  const rungs = ['index', 'sector', 'name']
+    .map((r) => {
+      const pk = c.rungs[r];
+      return `<div class="rung">
+        <div class="rl">${RUNG_LABEL[r]}</div>
+        <div class="rt">${esc(pk.symbol)}</div>
+        <div class="rn">${esc(pk.name)}</div>
+        <p class="note">${esc(pk.note)}</p>
+        ${tier
+          ? `<button class="btn-outline" data-act="queueRung" data-arg="${esc(pk.symbol)}" data-name="${esc(pk.name)}">Queue ${whole(tier)}</button>`
+          : '<button class="btn-outline" disabled>Bank more</button>'}
+      </div>`;
+    })
+    .join('');
+  return `<div class="marketcol" style="margin-top:${v.blockTop}">
+    <div class="mp-kicker">${esc(kicker)}</div>
+    <h2 class="mp-head" style="font-size:${v.ghostHeadFs}">${esc(c.headline)}</h2>
+    <p class="mp-deck">${esc(c.deck)}</p>
+    <div class="mp-report" style="font-size:${v.storyFs};column-count:${v.three ? 2 : 1}">${c.report.map((p) => `<p>${esc(p)}</p>`).join('')}</div>
+    <div class="rungs" style="grid-template-columns:${v.wide ? 'repeat(3, minmax(0, 1fr))' : 'minmax(0, 1fr)'}">${rungs}</div>
+    ${c.closing_note ? `<p class="mp-close">${esc(c.closing_note)}</p>` : ''}
+    <p class="mp-rule">${esc(st.editions.standing_rule)}</p>
+  </div>`;
 }
 
 // ---------- Calendar ----------
@@ -581,12 +635,18 @@ function screenTrade(st, v) {
         <span class="box18">${on ? '✕' : ''}</span><span class="a">${whole(t)}</span><span class="s">${open ? 'Unlocked' : `${whole(t - st.bank_cents)} to go`}</span></button>`;
     })
     .join('');
+  // Each position against the mattress: the bank earns nothing, so the gain
+  // on what the bank paid is the upside over straight saving.
   const positions = st.positions
     .map((p) => {
-      const g = p.value_cents - p.cost_cents;
+      const g = p.gain_cents ?? p.value_cents - p.cost_cents;
       const unlock = localDayOf(p.sell_unlocks_at);
+      const held = p.days_held == null ? '' : p.days_held === 0 ? ', bought today' : `, held ${p.days_held} ${plural(p.days_held, 'day', 'days')}`;
+      const vs = p.priced === false
+        ? `No price yet, shown at what the bank paid${held}`
+        : `<b style="color:${gainColor(g)}">${g > 0 ? '▲ ' : g < 0 ? '▼ ' : ''}${pct(p.cost_cents ? Math.abs(g) / p.cost_cents : 0).replace('+', '')}</b> · ${g === 0 ? 'even with keeping it in the bank' : `${fmt(Math.abs(g))} ${g > 0 ? 'ahead of' : 'behind'} keeping it in the bank`}${held}`;
       return `<span class="sym">${esc(p.symbol)}</span><span class="q">${Number(p.qty).toFixed(4)} sh</span><span class="v">${fmt(p.value_cents)}</span>
-        <span></span><span class="g" style="color:${g >= 0 ? '#2E6B45' : '#8E1F16'}">${g >= 0 ? '▲' : '▼'} ${num(g)} on ${fmt(p.cost_cents)}</span>
+        <span class="g">${vs}</span>
         ${p.sellable ? `<button class="sell" data-act="sell" data-arg="${esc(p.symbol)}">Sell all</button>` : `<span class="lock">Locked till ${ap(unlock)}</span>`}
         <span class="sep"></span>`;
     })
@@ -621,7 +681,7 @@ function screenTrade(st, v) {
     </div>
 
     <div>
-      <div class="lbl">Positions · closing prices</div>
+      <div class="lbl">Positions · against the bank</div>
       ${st.positions.length ? `<div class="pos">${positions}</div>` : '<p class="body13" style="margin-top:10px">No positions. The first $20 opens the desk.</p>'}
       ${st.prices_stale && st.positions.length ? '<p class="fine" style="text-align:left">Prices unavailable; shown at cost.</p>' : ''}
     </div>
@@ -657,13 +717,14 @@ function screenLedgers(st, v) {
     <div class="figs">
       <div class="fig"><div class="k"><i style="border-color:#22335E"></i>Burned</div><div class="v" style="color:#22335E">−${fmt(st.burned_cents)}</div><div class="s">had you kept at it</div></div>
       <div class="fig"><div class="k"><i style="border-color:#C0321F"></i>Yours</div><div class="v" style="color:#C0321F">${fmt(yours)}</div><div class="s">bank ${fmt(st.bank_cents)} · stocks ${fmt(st.portfolio_cents)}${st.queued_cents ? ` · queued ${fmt(st.queued_cents)}` : ''}</div></div>
-      <div class="fig"><div class="k"><i style="border-color:#7A7266;border-top-style:dashed"></i>Could-have-been</div><div class="v" style="color:#7A7266">${fmt(ghost)}</div><div class="s">${lots ? `${lots} smoked ${plural(lots, 'day', 'days')}, in ${esc(bench)}` : 'nothing smoked, nothing lost'}</div></div>
+      <div class="fig"><div class="k"><i style="border-color:#7A7266;border-top-style:dashed"></i>Could-have-been</div><div class="v" style="color:#7A7266">${fmt(ghost)}</div><div class="s">${lots ? `${lots} smoked ${plural(lots, 'day', 'days')}, in ${esc(bench)}` : 'nothing smoked, nothing lost'}</div>${lots ? `<div class="s" style="font-style:normal;color:#5E554A">${fmt(yours + ghost)} had every day been clean</div>` : ''}</div>
+      ${tradingFig(st)}
     </div>
 
     <div class="figbox">
       <div class="t">Fig. 1 · The three sums, daily, since the quit date</div>
       <div class="chart" id="chart">${h ? '' : '<p class="body13">Setting the figure…</p>'}</div>
-      ${lots === 0 ? '<p class="nog">The ghost line lies flat on zero. Nothing smoked, nothing to haunt.</p>' : ''}
+      ${lots === 0 ? '<p class="nog">The ghost line lies on top of yours. Nothing smoked, nothing to haunt.</p>' : ''}
     </div>
 
     <div class="lower" style="grid-template-columns:${v.ledgerCols};gap:22px ${v.colGap}">
@@ -695,7 +756,209 @@ function screenLedgers(st, v) {
           : '<p class="body13" style="margin-top:10px">No trades yet. The ledger is very tidy.</p>'}
       </div>
     </div>
+
+    ${recordSection(h, v)}
   </section>`;
+}
+
+// What trading has added or cost against leaving every dollar in the bank.
+function tradingFig(st) {
+  const t = st.trading;
+  if (!t) return '';
+  if (!t.bought_cents) {
+    return `<div class="fig"><div class="k">Trading, net</div><div class="v">$0.00</div><div class="s">nothing traded, so even with the bank</div></div>`;
+  }
+  const plain = 'font-style:normal;color:#5E554A';
+  return `<div class="fig"><div class="k">Trading, net</div><div class="v" style="color:${gainColor(t.net_cents)}">${sfmt(t.net_cents)}</div>
+    <div class="s">against keeping it in the bank</div>
+    <div class="s" style="${plain}"><b style="color:${gainColor(t.net_cents)}">${pct(t.net_cents / t.bought_cents)}</b> on ${fmt(t.bought_cents)} bought</div>
+    <div class="s" style="${plain}">held ${sfmt(t.unrealized_cents)}${t.sells ? ` · sold ${sfmt(t.realized_cents)}` : ''}</div>
+    ${st.prices_stale && st.positions.length ? `<div class="s" style="${plain}">No prices; held at cost.</div>` : ''}</div>`;
+}
+
+// ---------- The paper's own record ----------
+// What the Market Page printed, scored. Kept apart from what you bought.
+const RECORD = [
+  { key: 'index', name: 'The Index', color: '#1B1712', w: 2.4 },
+  { key: 'sector', name: 'The Sector', color: '#B8923F', w: 2 },
+  { key: 'name', name: 'The Name', color: '#22335E', w: 2 },
+];
+const MATTRESS = { key: 'mattress', name: 'The Mattress', color: '#A69C8C', w: 1.6, dash: true };
+const RUNG_WORD = { index: 'the index', sector: 'the sector', name: 'the name' };
+
+function recordSection(h, v) {
+  const head = (since) => `<div class="lbl-row"><span class="lbl">The Market Page · its own record</span>${since ? `<span class="rec-since">Since ${ap(since)}</span>` : ''}</div>`;
+  if (!h) return '';
+  const r = h.record;
+  if (!r || !r.editions) {
+    return `<div class="record">${head()}<p class="body13" style="margin-top:10px">The paper keeps score on its own picks, $20 a rung at the day's close, from its first edition. It has not printed one yet.</p></div>`;
+  }
+  const rows = [...RECORD.map((x) => ({ ...x, ...r.rungs[x.key] })), { ...MATTRESS, ...r.mattress }]
+    .map(
+      (x) => `<span class="rn"><i class="lk${x.dash ? ' dash' : ''}" style="border-color:${x.color}"></i>${x.name}</span>
+        <span class="r ret" style="color:${x.key === 'mattress' ? '#1B1712' : gainColor(x.pct)}">${pct(x.pct)}</span>
+        <span class="r">${x.picks}</span><span class="r">${whole(x.in_cents)}</span><span class="r">${x.picks ? fmt(x.now_cents) : '–'}</span>`,
+    )
+    .join('');
+  const move = (x) => (Math.round(x * 10000) === 0 ? 'flat' : `${x > 0 ? 'up' : 'down'} ${pct(Math.abs(x)).replace('+', '')}`);
+  const pick = (b) => `${esc(b.symbol)}, ${RUNG_WORD[b.rung]} on ${ap(b.day)}, ${move(b.pct)}`;
+  const deck = `<p class="rec-deck">Every Market Page prints three rungs. This is $20 in each, at the close of the day it ran, against the same $20 kept in the bank. The paper's picks, not your trades.</p>`;
+  if (!r.mattress.picks) {
+    return `<div class="record">${head(r.since)}${deck}<p class="bw" style="margin:0">The first picks await a closing price.</p></div>`;
+  }
+  return `<div class="record">
+    ${head(r.since)}
+    ${deck}
+    <div class="lower" style="grid-template-columns:${v.ledgerCols};gap:18px ${v.colGap}">
+      <div class="figbox">
+        <div class="t">Fig. 2 · Return on the paper's picks, by rung</div>
+        <div class="chart" id="rchart"></div>
+        <div class="rkey">${[...RECORD, MATTRESS].map((x) => `<span><i class="lk${x.dash ? ' dash' : ''}" style="border-color:${x.color}"></i>${x.name}</span>`).join('')}</div>
+      </div>
+      <div>
+        <div class="lbl">Box score${r.as_of ? ` · at the ${ap(r.as_of)} close` : ''}</div>
+        <div class="box">
+          <span class="h">Rung</span><span class="h r">Return</span><span class="h r">Picks</span><span class="h r">In</span><span class="h r">Now</span>
+          ${rows}
+        </div>
+        ${r.best ? `<p class="bw">Best pick: ${pick(r.best)}.${r.worst ? ` Worst: ${pick(r.worst)}.` : ''}</p>` : ''}
+        ${r.pending ? `<p class="bw">${r.pending === 1 ? 'The latest edition’s three await' : `The last ${numberWord(r.pending)} editions await`} a closing price.</p>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function drawRecordChart(box) {
+  const r = S.history?.record;
+  if (!r || !r.days.length || !r.mattress.picks) return;
+  const days = r.days;
+  const n = days.length;
+  const last = n - 1;
+  const W = Math.max(300, box.clientWidth);
+  const H = V().wide ? 240 : 200;
+  const m = { l: 56, r: 12, t: 14, b: 22 };
+  const series = [...RECORD.map((x) => ({ ...x, vals: days.map((d) => d[x.key]) })), { ...MATTRESS, vals: days.map(() => 0) }];
+  const all = series.flatMap((x) => x.vals).filter((x) => x != null);
+  let lo = Math.min(0, ...all);
+  let hi = Math.max(0, ...all);
+  // At least a percentage point of range, so a quiet week reads as quiet.
+  if (hi - lo < 0.01) {
+    const mid = (hi + lo) / 2;
+    lo = mid - 0.005;
+    hi = mid + 0.005;
+  }
+  const nice = (span) => {
+    const raw = span / 4;
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const q = raw / mag;
+    return (q <= 1 ? 1 : q <= 2 ? 2 : q <= 2.5 ? 2.5 : q <= 5 ? 5 : 10) * mag;
+  };
+  const step = nice(hi - lo);
+  lo = Math.floor(lo / step + 1e-9) * step;
+  hi = Math.ceil(hi / step - 1e-9) * step;
+  const dp = step * 100 >= 1 ? 0 : step * 100 >= 0.1 ? 1 : 2;
+  const x = (i) => m.l + (n === 1 ? (W - m.l - m.r) / 2 : (i / (n - 1)) * (W - m.l - m.r));
+  const y = (val) => m.t + ((hi - val) / (hi - lo)) * (H - m.t - m.b);
+  const grid = [];
+  for (let val = lo; val <= hi + step / 1e6; val += step) grid.push(Math.abs(val) < step / 1e6 ? 0 : val);
+  // Skips days before a rung's first priced pick.
+  const line = (arr) => {
+    let out = '';
+    let pen = false;
+    arr.forEach((val, i) => {
+      if (val == null) return (pen = false);
+      out += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(val).toFixed(1)}`;
+      pen = true;
+    });
+    return out;
+  };
+  const xi = n === 1 ? [0] : [...new Set([0, Math.floor(last / 2), last])];
+  const today = S.state.today;
+  const dayName = (i) => (days[i].day === today ? 'TODAY' : ap(days[i].day).toUpperCase());
+  const lastOf = (x) => x.vals[last];
+  const drawn = [...series].reverse(); // the index on top
+
+  box.innerHTML = `
+    ${grid.map((val) => `<span class="yl" style="top:${(y(val) - 5).toFixed(1)}px">${val === 0 ? '0%' : pct(val, dp)}</span>`).join('')}
+    ${xi.map((i) => `<span class="xl" style="left:${x(i).toFixed(1)}px;transform:${n === 1 ? 'translateX(-50%)' : i === 0 ? 'none' : i === last ? 'translateX(-100%)' : 'translateX(-50%)'}">${dayName(i)}</span>`).join('')}
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" tabindex="0" aria-label="Return on the paper's picks by rung since ${ap(days[0].day)}. ${series.map((s) => `${s.name} ${pct(lastOf(s))}`).join(', ')}. Use arrow keys to read each day.">
+      ${grid.map((val) => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(val).toFixed(1)}" y2="${y(val).toFixed(1)}" stroke="#D6C8A6" stroke-width="1"/>`).join('')}
+      ${drawn.map((s) => `<path d="${line(s.vals)}" fill="none" stroke="${s.color}" stroke-width="${s.w}"${s.dash ? ' stroke-dasharray="4 4"' : ''} stroke-linejoin="round"/>`).join('')}
+      ${drawn.filter((s) => lastOf(s) != null).map((s) => `<circle cx="${x(last).toFixed(1)}" cy="${y(lastOf(s)).toFixed(1)}" r="${s.dash ? 3 : 4}" fill="${s.color}"/>`).join('')}
+      <g class="cross" display="none">
+        <line class="cl" y1="${m.t}" y2="${H - m.b}" stroke="#5E554A" stroke-width="1"/>
+        ${drawn.map((s) => `<circle class="c-${s.key}" r="4" fill="${s.color}" stroke="#EFE4CB" stroke-width="2"/>`).join('')}
+      </g>
+      <rect class="hit" x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}"/>
+    </svg>
+    <div class="tip" hidden></div>`;
+  wireChart(box, { n, W, x, label: (i) => (days[i].day === today ? 'Today' : `${wd3(days[i].day)}. ${ap(days[i].day)}`), points: (i) => series.map((s) => ({ sel: `.c-${s.key}`, y: s.vals[i] == null ? null : y(s.vals[i]) })), rows: (i) => series.map((s) => ({ label: s.name, value: pct(s.vals[i]), color: s.color, dash: s.dash })), m });
+}
+
+// Crosshair, tooltip, and arrow keys for a day-by-day chart.
+function wireChart(box, { n, W, x, m, label, points, rows }) {
+  const last = n - 1;
+  const svg = box.querySelector('svg');
+  const cross = svg.querySelector('.cross');
+  const tip = box.querySelector('.tip');
+  let idx = last;
+  function show(i) {
+    idx = Math.max(0, Math.min(last, i));
+    const cx = x(idx);
+    cross.setAttribute('display', 'inline');
+    const cl = cross.querySelector('.cl');
+    cl.setAttribute('x1', cx);
+    cl.setAttribute('x2', cx);
+    for (const p of points(idx)) {
+      const c = cross.querySelector(p.sel);
+      c.setAttribute('display', p.y == null ? 'none' : 'inline');
+      if (p.y != null) {
+        c.setAttribute('cx', cx);
+        c.setAttribute('cy', p.y);
+      }
+    }
+    tip.replaceChildren();
+    const head = document.createElement('div');
+    head.className = 'h';
+    head.textContent = label(idx);
+    tip.append(head);
+    for (const r of rows(idx)) {
+      const row = document.createElement('div');
+      row.className = 'r';
+      const key = document.createElement('i');
+      key.className = `lk${r.dash ? ' dash' : ''}`;
+      key.style.borderColor = r.color;
+      const b = document.createElement('b');
+      b.textContent = r.value;
+      const name = document.createElement('span');
+      name.textContent = r.label;
+      row.append(key, b, name);
+      tip.append(row);
+    }
+    tip.hidden = false;
+    const tw = tip.offsetWidth;
+    const left = cx + 12 + tw <= W ? cx + 12 : cx - 12 - tw;
+    tip.style.left = `${Math.max(0, left)}px`;
+  }
+  function hide() {
+    cross.setAttribute('display', 'none');
+    tip.hidden = true;
+  }
+  const pick = (e) => {
+    const rect = svg.getBoundingClientRect();
+    return n === 1 ? 0 : Math.round(((e.clientX - rect.left - m.l) / (W - m.l - m.r)) * last);
+  };
+  svg.addEventListener('pointermove', (e) => show(pick(e)));
+  svg.addEventListener('pointerdown', (e) => show(pick(e)));
+  svg.addEventListener('pointerleave', hide);
+  svg.addEventListener('focus', () => show(idx));
+  svg.addEventListener('blur', hide);
+  svg.addEventListener('keydown', (e) => {
+    const k = { ArrowLeft: idx - 1, ArrowRight: idx + 1, Home: 0, End: last }[e.key];
+    if (k === undefined) return;
+    e.preventDefault();
+    show(k);
+  });
 }
 
 function drawChart(box) {
@@ -710,7 +973,10 @@ function drawChart(box) {
   const burned = days.map((d) => -d.burned_cents);
   const yours = days.map((d) => d.yours_cents ?? 0);
   const ghost = days.map((d) => d.ghost_cents ?? 0);
-  const vals = [...burned, ...yours, ...ghost, 0];
+  // Stacked on Yours: the dashed line is what Yours would be had every
+  // smoked day been clean. The gap between the two is the ghost.
+  const stacked = yours.map((v, i) => v + ghost[i]);
+  const vals = [...burned, ...stacked, 0];
   let lo = Math.min(...vals);
   let hi = Math.max(...vals);
   if (hi - lo < 1000) hi = lo + 1000;
@@ -730,6 +996,8 @@ function drawChart(box) {
   const label = (val) => (val === 0 ? '$0' : `${val < 0 ? '−' : ''}$${Math.abs(val / 100).toLocaleString('en-US')}`);
   const line = (arr) => arr.map((val, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(val).toFixed(1)}`).join('');
   const area = (arr) => (n < 2 ? '' : `M${x(0).toFixed(1)},${y(0).toFixed(1)}` + arr.map((val, i) => `L${x(i).toFixed(1)},${y(val).toFixed(1)}`).join('') + `L${x(last).toFixed(1)},${y(0).toFixed(1)}Z`);
+  // The region between two series, lower drawn back to front.
+  const band = (lo, hi) => (n < 2 ? '' : hi.map((val, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(val).toFixed(1)}`).join('') + [...lo.keys()].reverse().map((i) => `L${x(i).toFixed(1)},${y(lo[i]).toFixed(1)}`).join('') + 'Z');
   const xi = n === 1 ? [0] : [...new Set([0, Math.floor(last / 2), last])];
   const today = S.state.today;
   const dayName = (i) => (days[i].day === today ? 'TODAY' : ap(days[i].day).toUpperCase());
@@ -737,15 +1005,16 @@ function drawChart(box) {
   box.innerHTML = `
     ${grid.map((val) => `<span class="yl" style="top:${(y(val) - 5).toFixed(1)}px">${label(val)}</span>`).join('')}
     ${xi.map((i) => `<span class="xl" style="left:${x(i).toFixed(1)}px;transform:${n === 1 ? 'translateX(-50%)' : i === 0 ? 'none' : i === last ? 'translateX(-100%)' : 'translateX(-50%)'}">${dayName(i)}</span>`).join('')}
-    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" tabindex="0" aria-label="Burned, yours and could-have-been over ${n} ${plural(n, 'day', 'days')}. Burned ${fmt(burned[last])}, yours ${fmt(yours[last])}, could-have-been ${fmt(ghost[last])}. Use arrow keys to read each day.">
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" tabindex="0" aria-label="Burned, yours, and yours had every day been clean, over ${n} ${plural(n, 'day', 'days')}. Burned ${fmt(burned[last])}, yours ${fmt(yours[last])}, had every day been clean ${fmt(stacked[last])}. Use arrow keys to read each day.">
       ${grid.map((val) => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(val).toFixed(1)}" y2="${y(val).toFixed(1)}" stroke="${val === 0 ? '#1B1712' : '#D6C8A6'}" stroke-width="${val === 0 ? 1.2 : 1}"/>`).join('')}
       <path d="${area(burned)}" fill="#22335E" opacity=".08"/>
       <path d="${area(yours)}" fill="#C0321F" opacity=".1"/>
       <path d="${line(burned)}" fill="none" stroke="#22335E" stroke-width="2" stroke-linejoin="round"/>
-      <path d="${line(ghost)}" fill="none" stroke="#7A7266" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round"/>
+      <path d="${band(yours, stacked)}" fill="#7A7266" opacity=".12"/>
+      <path d="${line(stacked)}" fill="none" stroke="#7A7266" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round"/>
       <path d="${line(yours)}" fill="none" stroke="#C0321F" stroke-width="2.4" stroke-linejoin="round"/>
       <circle cx="${x(last).toFixed(1)}" cy="${y(burned[last]).toFixed(1)}" r="4" fill="#22335E"/>
-      <circle cx="${x(last).toFixed(1)}" cy="${y(ghost[last]).toFixed(1)}" r="4" fill="#7A7266"/>
+      <circle cx="${x(last).toFixed(1)}" cy="${y(stacked[last]).toFixed(1)}" r="4" fill="#7A7266"/>
       <circle cx="${x(last).toFixed(1)}" cy="${y(yours[last]).toFixed(1)}" r="4.5" fill="#C0321F"/>
       <g class="cross" display="none">
         <line class="cl" y1="${m.t}" y2="${H - m.b}" stroke="#5E554A" stroke-width="1"/>
@@ -768,7 +1037,7 @@ function drawChart(box) {
     cross.setAttribute('display', 'inline');
     set('.cl', 'x1', cx);
     set('.cl', 'x2', cx);
-    for (const [sel, arr] of [['.cb', burned], ['.cg', ghost], ['.cy', yours]]) {
+    for (const [sel, arr] of [['.cb', burned], ['.cg', stacked], ['.cy', yours]]) {
       set(sel, 'cx', cx);
       set(sel, 'cy', y(arr[idx]));
     }
@@ -777,7 +1046,8 @@ function drawChart(box) {
     head.className = 'h';
     head.textContent = days[idx].day === today ? 'Today' : `${wd3(days[idx].day)}. ${ap(days[idx].day)}`;
     tip.append(head);
-    for (const [label, val, color, dash] of [['Yours', yours[idx], '#C0321F', false], ['Could-have-been', ghost[idx], '#7A7266', true], ['Burned', burned[idx], '#22335E', false]]) {
+    for (const [label, val, color, dash] of [['Had every day been clean', stacked[idx], '#7A7266', true], ['Yours', yours[idx], '#C0321F', false], ['of it could-have-been', ghost[idx], '#7A7266', true], ['Burned', burned[idx], '#22335E', false]]) {
+      if (label.startsWith('of it') && !ghost[idx]) continue;
       const row = document.createElement('div');
       row.className = 'r';
       const key = document.createElement('i');
@@ -842,6 +1112,10 @@ function screenSettings(st, v) {
       <p class="body13">Each smoked day's ${esc(dailyStr(st.daily_cents))} is bought at that day's close, as if you'd saved it. Change the ticker and the whole ghost is redrawn, retroactively, like a good biography.</p>
       <div class="lbl" style="margin-top:8px">Broker</div>
       <div class="broker"><span>Alpaca</span><span>${brokerLine}</span></div>
+      <div class="lbl" style="margin-top:8px">The Market Page</div>
+      <label class="field"><span>Universe · one per line: ticker, rung, name</span>
+        <textarea class="inp area" name="market_universe" rows="9" spellcheck="false" autocapitalize="off" autocomplete="off">${esc(universeText(s.market_universe))}</textarea></label>
+      <p class="body13">The only tickers the paper may print. Rungs are index, sector, and name, at least one of each.</p>
     </div>
     <div class="col">
       <div class="lbl">Trading rules</div>
@@ -858,6 +1132,19 @@ function screenSettings(st, v) {
   </form>`;
 }
 
+const universeText = (list) => list.map((u) => `${u.symbol} ${u.rung} ${u.name}`).join('\n');
+// "VOO index Vanguard S&P 500 ETF" per line. The server validates the rest.
+function parseUniverse(text) {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [symbol, rung = '', ...name] = l.split(/\s+/);
+      return { symbol: symbol.toUpperCase(), rung: rung.toLowerCase(), name: name.join(' ') || symbol.toUpperCase() };
+    });
+}
+
 async function saveSettings(form) {
   const s = S.state.settings;
   const val = Object.fromEntries(new FormData(form));
@@ -870,6 +1157,7 @@ async function saveSettings(form) {
     tiers_cents: val.tiers_cents.split(/[\s,$]+/).filter(Boolean).map(toCents),
     cooldown_hours: Number(val.cooldown_hours),
     hold_days: Number(val.hold_days),
+    market_universe: parseUniverse(val.market_universe || ''),
   };
   for (const [k, x] of Object.entries(patch)) if (JSON.stringify(x) === JSON.stringify(s[k])) delete patch[k];
   if (!Object.keys(patch).length) {
@@ -978,6 +1266,14 @@ const ACT = {
     const tab = S.tab;
     const work = tab === 'ledgers' ? Promise.all([refresh(), refreshHistory()]) : refresh();
     work.then(() => S.tab === tab && !S.editDay && !S.confirmMode && render()).catch(() => {});
+  },
+  // A rung's button: the order form, prefilled with the smallest unlocked
+  // tier and that ticker. Nothing is queued until the reader confirms.
+  queueRung(el) {
+    const tiers = S.state.unlocked_tiers;
+    if (!tiers.length) return;
+    S.trade = { ...S.trade, tier: Math.min(...tiers), symbol: el.dataset.arg, name: el.dataset.name || '', confirm: false, msg: '', error: false };
+    ACT.tab({ dataset: { arg: 'trade' } });
   },
   edit(el) {
     S.editDay = el.dataset.arg;

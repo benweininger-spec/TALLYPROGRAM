@@ -3,8 +3,12 @@
   "outputDirectory": "public",
   "crons": [
     { "path": "/api/cron/execute-queue", "schedule": "35 14 * * 1-5" },
-    { "path": "/api/cron/snapshot", "schedule": "30 21 * * *" }
+    { "path": "/api/cron/snapshot", "schedule": "30 21 * * *" },
+    { "path": "/api/cron/market-page", "schedule": "25 13 * * 1-5" }
   ],
+  "functions": {
+    "api/cron/*.js": { "maxDuration": 300 }
+  },
   "headers": [
     {
       "source": "/(.*)",

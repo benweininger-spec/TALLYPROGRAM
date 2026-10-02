@@ -50,6 +50,11 @@ test('cron requires the cron secret, not a user token', async () => {
   assert.equal((await call(cron, { token: 'good', url: '/api/cron/execute-queue' })).statusCode, 401);
   assert.equal((await call(cron, { token: 'cs', url: '/api/cron/execute-queue' })).statusCode, 200);
   assert.equal((await call(cron, { token: 'cs', url: '/api/cron/snapshot' })).statusCode, 200);
+  assert.equal((await call(cron, { token: 'good', url: '/api/cron/market-page' })).statusCode, 401);
+  // No writer configured here: the job answers, and the page runs the fallback.
+  const mp = await call(cron, { token: 'cs', url: '/api/cron/market-page' });
+  assert.equal(mp.statusCode, 200);
+  assert.equal(mp.body.status, 'spiked');
   assert.equal((await call(cron, { token: 'cs', url: '/api/cron/nope' })).statusCode, 404);
 });
 
@@ -92,8 +97,18 @@ test('demo: public, 22 days in, read-only by construction', async () => {
   assert.equal(st.body.day_count, 22);
   assert.equal(st.body.days.filter((d) => d.state === 'smoked').length, 3);
   assert.equal(st.body.positions.length, 2);
+  // One sell booked a small gain; the two held positions are one up, one down.
+  assert.equal(st.body.trading.sells, 1);
+  assert.ok(st.body.trading.realized_cents > 0);
+  assert.ok(st.body.positions.some((p) => p.gain_cents > 0) && st.body.positions.some((p) => p.gain_cents < 0));
   const h = await call(demo, { token: null, url: '/api/demo?view=history' });
   assert.equal(h.body.days.length, 22);
+  // The paper's record: two weeks of weekday editions, today's not yet scored.
+  assert.ok(h.body.record.editions >= 10);
+  assert.ok(h.body.record.rungs.index.picks > 0);
+  assert.equal(h.body.record.mattress.pct, 0);
+  // The sample edition is on the demo's front page.
+  assert.equal(st.body.editions.today.content.headline, 'STOCKS DRIFT HIGHER; NOBODY CLAIMS CREDIT');
   assert.equal((await call(demo, { token: null, method: 'PUT', url: '/api/demo' })).statusCode, 405);
   assert.equal((await call(demo, { token: null, url: '/api/demo?view=settings' })).statusCode, 400);
 });

@@ -28,9 +28,22 @@ unused and kept only for reference.
   stock or ETF. The bank pays immediately and the order waits 24 hours before it goes
   to Alpaca. Cancel any time before then for a full refund. Positions cannot be sold
   for 7 days after the first fill; a sale sells the whole position and returns the
-  proceeds to the bank.
+  proceeds to the bank. Each position shows its gain against keeping that money in
+  the bank, in percent and dollars, and how long it has been held.
 - **Ledgers.** Burned, yours, and could-have-been, charted daily since the quit
-  date, with daily values and trade history.
+  date, with daily values and trade history. A fourth figure, **trading, net**, is
+  what trading has added or cost against leaving every dollar in the bank: gains on
+  what is held plus gains booked by sells.
+- **The Market Page.** On Now, under the lead story: a morning edition written by
+  Claude from the previous session's closes and headlines, with three rungs (an
+  index fund, a sector fund, and a large company) each with a button that fills in
+  the order form. Nothing is queued until you confirm, and the 24-hour cooldown
+  still applies. Before the morning job runs, yesterday's page shows as a late edition.
+- **The paper's own record.** At the foot of Ledgers, the Market Page keeps score on
+  itself: $20 into each printed rung at the close of the day it ran, as three paper
+  portfolios against a fourth, the mattress, which is the same $20 kept in the bank.
+  A box score and a chart of each rung's return. These are the paper's picks, not
+  your trades.
 - **Settings.** Quit date, pack price, timezone, ghost benchmark, tiers, and the
   guardrails. Cooldown and hold can go up but never below 24 hours and 7 days. The $20
   to $200 range is fixed in code and in the database.
@@ -94,9 +107,23 @@ supabase/migrations/  schema, row-level security, single-user lock
 3. Deploy. Open the URL, enter your email, and follow the link.
 
 Vercel Cron runs the trade queue once each weekday morning and a snapshot each
-evening. Opening the app also advances any trade whose 24 hours are up, so the cron is
+evening, and writes the Market Page at 13:25 UTC on weekdays (see below). Opening the app also advances any trade whose 24 hours are up, so the cron is
 a backstop. For a 15-minute cadence on the free plan, add repo secrets
 `CIGGY_BANK_APP_URL` and `CIGGY_BANK_CRON_SECRET` to enable `.github/workflows/queue.yml`.
+
+### The Market Page
+
+Each weekday morning Claude writes a short edition from Alpaca's closes and headlines,
+and offers three rungs from your universe. It reports; it never predicts.
+
+1. Create an API key at console.anthropic.com and add it in Vercel as
+   `ANTHROPIC_API_KEY` (Sensitive). Redeploy.
+2. To print the first edition without waiting for the cron, call the job once:
+   `curl -H "Authorization: Bearer $CRON_SECRET" https://getciggybank.com/api/cron/market-page`
+3. Edit the universe under Settings > The Market Page.
+
+Without the key, or when Alpaca's data is down, the page runs a "presses down" notice
+and the next run tries again. One short Claude call a day, two at most.
 
 ### 4. Going live
 

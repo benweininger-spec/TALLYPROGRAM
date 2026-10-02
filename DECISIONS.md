@@ -138,3 +138,86 @@ at each smoked day's close, paper theme only. These are the calls it left open.
   also dashed, every series has a legend key, and the daily table carries every value.
 - **Broker line in Settings** has three variants: paper (the design's copy), live
   ("Real money, real feelings."), and no keys ("No keys, no feelings.").
+
+## Trading against saving, and the paper's record
+
+- **The mattress is the bank.** The bank earns nothing, so a position's gain on its
+  cost is exactly its upside over straight saving. No interest rate is assumed.
+- **Cost is what the bank paid**, not shares × average fill price: the buy's debit
+  less any refund, from the ledger. A position's cost and its gain therefore add up
+  to the cent with the trading figure, and a $20 buy shows a $20.00 cost.
+- **Trading, net = held gains + booked gains.** Booked gains come from replaying
+  fills in order, with a sell taking its share of the cost of what was held.
+  Queued, cancelled, and rejected buys count for nothing. Without prices, positions
+  sit at cost and add nothing. Its percentage is on everything ever bought, so money
+  recycled through a sale and a rebuy counts twice; simple, and slightly modest.
+- **The trading tile leads with dollars**, like the three figures beside it. The
+  percentage is right under it. Positions and the paper's record lead with
+  percentages, because at $20 a pick the dollars are cents for months.
+- **A printed rung buys at the close of the first session on or after its edition
+  day.** The edition goes out before the open, so that close is a price the paper had
+  not seen. A weekend or holiday edition waits for the next session. The price cache
+  stores a close for every calendar day, so a session is a day whose close differs
+  from the day before; two sessions closing at the identical price read as one, and
+  the lot then prices a session later, never earlier.
+- **A pick is scored once its close is in.** Until then it is listed as awaiting a
+  close and kept out of the box score, so the percentage does not dip every morning
+  when a new $20 joins at cost. The mattress counts the same editions.
+- **Values are at the last close**, not the live price: one cached close per ticker
+  instead of up to 26 live quotes on every Ledgers load.
+- **Spiked editions count.** The fallback rungs were printed, and a reader could have
+  bought them. The record is what the paper printed, not what it meant to print.
+- **The record never reads positions, trades, or the ledger**, so what the paper
+  printed and what you bought cannot mix.
+- **Splits re-base the cache.** Bars are split-adjusted when fetched, so a close
+  cached before a split no longer matches. When the overlap fetched with each top-up
+  disagrees with the cache by more than 2%, the whole range for that ticker is
+  fetched again. Bars are split-adjusted only, so dividends never trip it. Ghost lots
+  store their shares when priced and are not repriced after a split. The benchmark
+  is a broad ETF that rarely splits, so that stays a known gap.
+- **The demo prints two weeks of weekday editions**, the sample's words with rungs
+  rotated through the universe, and adds a sale at a small gain and a holding at a
+  small loss. The fake broker now lists the whole default universe, and its closes
+  depend only on the date, so a close is the same whenever it is fetched.
+
+## The Market Page, built
+
+Built to `MARKET_PAGE.md`, with the editorial contract in `lib/edition.js` used as
+written. Where the build differs from the spec:
+
+- **The schema goes through the SDK's JSON-schema helper.** Structured outputs do
+  not take `maxItems`, so the helper moves it into the field's description;
+  `$defs` and `$ref` pass through. `validateEdition` still enforces one to three
+  paragraphs. `EDITION_SCHEMA` itself is unchanged.
+- **Parsing is lenient so the stop reason speaks.** A refusal or a reply cut off at
+  `max_tokens` is not JSON, and the SDK's parser would throw a parse error first.
+  The format's parser returns nothing instead; then a refusal, a cut-off reply, or
+  an empty one is a spiked draft and gets the one retry.
+- **The prompt-cache marker is set but saves nothing today.** The voice prompt is
+  about 500 tokens, under the smallest prompt the API will cache. At one call a
+  day it does not matter.
+- **"Yesterday" is the last edition before today**, not the calendar day before. On
+  a Monday, Friday's rungs are the ones the page must not repeat.
+- **Only a failed writer or no closes at all stop the presses.** A ticker whose bars
+  fail is left out of the prompt. Failed headlines leave the page saying the wire was
+  quiet, as the voice prompt asks. Any other writer error (no key, API down) goes
+  straight to the fallback without a retry. The fallback names what was missing in
+  the paper's words; the technical reason is kept in `spiked`.
+- **The fallback is checked without yesterday's page.** It always prints the first
+  ticker at each rung, so two fallback days in a row would otherwise reject
+  themselves. Its model is recorded as `fallback`.
+- **A spiked day is not final.** Calling the job again retries it. A clean edition
+  is never redone, and a fallback never overwrites one written by a concurrent run.
+- **On wide pages the Market Page runs full width under the lead story**, not in
+  the story column. The story column is too narrow for three rung columns; on a
+  phone it sits between the X-Effect Index and the classifieds as specified.
+- **The rung button says the smallest unlocked tier** ("Queue $20" by default) and
+  fills in the order form. Nothing is queued until the reader confirms.
+- **The cron function may run up to 300 seconds.** Two Opus drafts plus the data
+  fetch can pass the old 10-second default. The setting applies to all three jobs.
+- **No edition is written on opening the app.** Before the morning run, the last
+  edition shows as a late edition. With none at all, the page does not appear.
+- **The model sees only** the universe, six closes per ticker, up to 20 headlines
+  tagged with universe tickers, the reader's held tickers, and the last rungs.
+  Never balances, amounts, names, or the email address.
+
