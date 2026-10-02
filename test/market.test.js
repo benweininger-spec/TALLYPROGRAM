@@ -161,7 +161,7 @@ forEachStore('market page', (ctx) => {
     };
     let r = await svc.writeEdition();
     assert.equal(r.status, 'spiked');
-    assert.match(r.spiked, /^Market data unavailable: 26 of 26/);
+    assert.match(r.spiked, /^Market data unavailable: 26 of 26 bar requests failed \(VOO: 500 data API down\)/);
     assert.equal(writer.calls.length, 0);
 
     svc = await setup(null);
