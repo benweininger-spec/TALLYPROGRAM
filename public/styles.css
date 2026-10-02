@@ -234,7 +234,8 @@ button { touch-action: manipulation; }
 .pos .sym { padding-top: 10px; font-size: 15px; font-weight: 700; }
 .pos .q { padding-top: 10px; color: var(--muted); }
 .pos .v { padding-top: 10px; text-align: right; font-weight: 700; }
-.pos .g { font-size: 12px; }
+.pos .g { grid-column: 1 / 3; font-size: 12px; line-height: 1.35; padding-top: 2px; }
+.pos .g b { font-weight: 700; }
 .pos .lock { text-align: right; font-size: 11px; color: var(--muted); font-family: var(--franklin); letter-spacing: .06em; text-transform: uppercase; font-weight: 600; }
 .pos .sell { appearance: none; border: 0; border-bottom: 2px solid var(--red); background: none; cursor: pointer; padding: 0; min-height: 28px; justify-self: end; font-family: var(--franklin); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--red); }
 .pos .sep { grid-column: 1 / -1; border-bottom: 1px solid var(--rule-light); padding-top: 8px; }
@@ -251,14 +252,20 @@ button { touch-action: manipulation; }
 
 /* ---------- Ledgers ---------- */
 .ledgers { display: grid; gap: 20px; padding-top: 12px; font-family: var(--franklin); }
-.figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; }
+.figs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
 .fig + .fig { border-left: 1px solid var(--ink); }
 .fig { padding: 0 12px; min-width: 0; }
 .fig:first-child { padding-left: 0; }
 .fig:last-child { padding-right: 0; }
-.fig .k { display: flex; align-items: center; gap: 6px; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
+.fig .k { display: flex; align-items: center; gap: 6px; min-height: 12px; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
 .fig .k i { width: 14px; border-top: 2px solid; }
-.fig .v { font-family: var(--caslon); font-size: clamp(22px, 4.4vw, 64px); line-height: 1; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.fig .v { font-family: var(--caslon); font-size: clamp(22px, 3.7vw, 54px); line-height: 1; margin-top: 6px; font-variant-numeric: tabular-nums; }
+/* Two by two on a phone. */
+[data-layout="narrow"] .figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+[data-layout="narrow"] .fig .v { font-size: 26px; }
+[data-layout="narrow"] .fig:nth-child(2) { padding-right: 0; }
+[data-layout="narrow"] .fig:nth-child(3) { border-left: 0; padding-left: 0; }
+[data-layout="narrow"] .fig:nth-child(n + 3) { border-top: 1px solid var(--ink); margin-top: 12px; padding-top: 10px; }
 .fig .s { font-family: var(--old); font-size: 12px; margin-top: 4px; font-style: italic; }
 .figbox { border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); padding: 12px 0 8px; }
 .figbox .t { font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; margin-bottom: 6px; }
@@ -283,6 +290,18 @@ button { touch-action: manipulation; }
 .daily .h { font-family: var(--franklin); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
 .daily .r { text-align: right; }
 .daily .dl { display: flex; align-items: center; gap: 8px; }
+/* The paper's own record: kept visibly apart from yours. */
+.record { border-top: 3px double var(--ink); padding-top: 12px; display: grid; gap: 10px; }
+.rec-since { font-family: var(--franklin); font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; color: var(--muted); }
+.rec-deck { margin: 0; font-family: var(--old); font-size: 13.5px; font-style: italic; line-height: 1.4; }
+.rkey { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; color: var(--muted); }
+.rkey span { display: inline-flex; align-items: center; gap: 6px; }
+.box { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: 7px 14px; font-family: var(--old); font-size: 13px; padding-top: 8px; font-variant-numeric: tabular-nums; align-items: baseline; }
+.box .h { font-family: var(--franklin); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
+.box .r { text-align: right; }
+.box .rn { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.box .ret { font-family: var(--caslon); font-size: 17px; }
+.bw { margin: 10px 0 0; font-family: var(--old); font-size: 13px; line-height: 1.4; }
 .hist { display: grid; grid-template-columns: auto 1fr auto auto; gap: 6px 14px; font-family: var(--old); font-size: 13px; padding-top: 8px; font-variant-numeric: tabular-nums; }
 .hist .r { text-align: right; }
 .hist .st { font-style: italic; }

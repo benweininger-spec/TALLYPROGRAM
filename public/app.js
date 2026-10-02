@@ -32,6 +32,16 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const num = (c) => (Math.abs(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt = (c) => `${c < 0 ? '−' : ''}$${num(c)}`;
 const whole = (c) => `${c < 0 ? '−' : ''}$${Math.round(Math.abs(c) / 100).toLocaleString('en-US')}`;
+// Signed money and percentages for gains: +$0.84, −$0.12, $0.00; +1.68%.
+const sfmt = (c) => `${c > 0 ? '+' : ''}${fmt(c)}`;
+const pct = (x, dp = 2) => {
+  if (x == null || !Number.isFinite(x)) return '–';
+  const r = Math.round(x * 100 * 10 ** dp) / 10 ** dp;
+  return `${r > 0 ? '+' : r < 0 ? '−' : ''}${Math.abs(r).toFixed(dp)}%`;
+};
+const UP = '#2E6B45';
+const DOWN = '#8E1F16';
+const gainColor = (c) => (c > 0 ? UP : c < 0 ? DOWN : '#1B1712');
 const ord = (n) => {
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;
@@ -113,9 +123,9 @@ function V() {
 function watchLayout() {
   const apply = () => {
     const next = layoutFor(document.documentElement.clientWidth || window.innerWidth);
+    document.documentElement.dataset.layout = next;
     if (next !== S.layout) {
       S.layout = next;
-      document.documentElement.dataset.layout = next;
       if (S.state) render();
     }
   };
@@ -373,21 +383,23 @@ function render() {
 }
 
 function afterRender() {
+  S.chartRO?.forEach((ro) => ro.disconnect());
+  S.chartRO = [];
   if (S.tab === 'ledgers') {
-    const box = $app.querySelector('#chart');
-    if (box) {
-      drawChart(box);
-      S.chartRO?.disconnect();
-      if (typeof ResizeObserver !== 'undefined') {
-        let w = box.clientWidth;
-        S.chartRO = new ResizeObserver(() => {
-          if (box.clientWidth !== w) {
-            w = box.clientWidth;
-            drawChart(box);
-          }
-        });
-        S.chartRO.observe(box);
-      }
+    for (const [id, draw] of [['#chart', drawChart], ['#rchart', drawRecordChart]]) {
+      const box = $app.querySelector(id);
+      if (!box) continue;
+      draw(box);
+      if (typeof ResizeObserver === 'undefined') continue;
+      let w = box.clientWidth;
+      const ro = new ResizeObserver(() => {
+        if (box.clientWidth !== w) {
+          w = box.clientWidth;
+          draw(box);
+        }
+      });
+      ro.observe(box);
+      S.chartRO.push(ro);
     }
   }
   const dlg = $app.querySelector('.dialog [data-focus]');
@@ -581,12 +593,18 @@ function screenTrade(st, v) {
         <span class="box18">${on ? '✕' : ''}</span><span class="a">${whole(t)}</span><span class="s">${open ? 'Unlocked' : `${whole(t - st.bank_cents)} to go`}</span></button>`;
     })
     .join('');
+  // Each position against the mattress: the bank earns nothing, so the gain
+  // on what the bank paid is the upside over straight saving.
   const positions = st.positions
     .map((p) => {
-      const g = p.value_cents - p.cost_cents;
+      const g = p.gain_cents ?? p.value_cents - p.cost_cents;
       const unlock = localDayOf(p.sell_unlocks_at);
+      const held = p.days_held == null ? '' : p.days_held === 0 ? ', bought today' : `, held ${p.days_held} ${plural(p.days_held, 'day', 'days')}`;
+      const vs = p.priced === false
+        ? `No price yet, shown at what the bank paid${held}`
+        : `<b style="color:${gainColor(g)}">${g > 0 ? '▲ ' : g < 0 ? '▼ ' : ''}${pct(p.cost_cents ? Math.abs(g) / p.cost_cents : 0).replace('+', '')}</b> · ${g === 0 ? 'even with keeping it in the bank' : `${fmt(Math.abs(g))} ${g > 0 ? 'ahead of' : 'behind'} keeping it in the bank`}${held}`;
       return `<span class="sym">${esc(p.symbol)}</span><span class="q">${Number(p.qty).toFixed(4)} sh</span><span class="v">${fmt(p.value_cents)}</span>
-        <span></span><span class="g" style="color:${g >= 0 ? '#2E6B45' : '#8E1F16'}">${g >= 0 ? '▲' : '▼'} ${num(g)} on ${fmt(p.cost_cents)}</span>
+        <span class="g">${vs}</span>
         ${p.sellable ? `<button class="sell" data-act="sell" data-arg="${esc(p.symbol)}">Sell all</button>` : `<span class="lock">Locked till ${ap(unlock)}</span>`}
         <span class="sep"></span>`;
     })
@@ -621,7 +639,7 @@ function screenTrade(st, v) {
     </div>
 
     <div>
-      <div class="lbl">Positions · closing prices</div>
+      <div class="lbl">Positions · against the bank</div>
       ${st.positions.length ? `<div class="pos">${positions}</div>` : '<p class="body13" style="margin-top:10px">No positions. The first $20 opens the desk.</p>'}
       ${st.prices_stale && st.positions.length ? '<p class="fine" style="text-align:left">Prices unavailable; shown at cost.</p>' : ''}
     </div>
@@ -658,6 +676,7 @@ function screenLedgers(st, v) {
       <div class="fig"><div class="k"><i style="border-color:#22335E"></i>Burned</div><div class="v" style="color:#22335E">−${fmt(st.burned_cents)}</div><div class="s">had you kept at it</div></div>
       <div class="fig"><div class="k"><i style="border-color:#C0321F"></i>Yours</div><div class="v" style="color:#C0321F">${fmt(yours)}</div><div class="s">bank ${fmt(st.bank_cents)} · stocks ${fmt(st.portfolio_cents)}${st.queued_cents ? ` · queued ${fmt(st.queued_cents)}` : ''}</div></div>
       <div class="fig"><div class="k"><i style="border-color:#7A7266;border-top-style:dashed"></i>Could-have-been</div><div class="v" style="color:#7A7266">${fmt(ghost)}</div><div class="s">${lots ? `${lots} smoked ${plural(lots, 'day', 'days')}, in ${esc(bench)}` : 'nothing smoked, nothing lost'}</div>${lots ? `<div class="s" style="font-style:normal;color:#5E554A">${fmt(yours + ghost)} had every day been clean</div>` : ''}</div>
+      ${tradingFig(st)}
     </div>
 
     <div class="figbox">
@@ -695,7 +714,209 @@ function screenLedgers(st, v) {
           : '<p class="body13" style="margin-top:10px">No trades yet. The ledger is very tidy.</p>'}
       </div>
     </div>
+
+    ${recordSection(h, v)}
   </section>`;
+}
+
+// What trading has added or cost against leaving every dollar in the bank.
+function tradingFig(st) {
+  const t = st.trading;
+  if (!t) return '';
+  if (!t.bought_cents) {
+    return `<div class="fig"><div class="k">Trading, net</div><div class="v">$0.00</div><div class="s">nothing traded, so even with the bank</div></div>`;
+  }
+  const plain = 'font-style:normal;color:#5E554A';
+  return `<div class="fig"><div class="k">Trading, net</div><div class="v" style="color:${gainColor(t.net_cents)}">${sfmt(t.net_cents)}</div>
+    <div class="s">against keeping it in the bank</div>
+    <div class="s" style="${plain}"><b style="color:${gainColor(t.net_cents)}">${pct(t.net_cents / t.bought_cents)}</b> on ${fmt(t.bought_cents)} bought</div>
+    <div class="s" style="${plain}">held ${sfmt(t.unrealized_cents)}${t.sells ? ` · sold ${sfmt(t.realized_cents)}` : ''}</div>
+    ${st.prices_stale && st.positions.length ? `<div class="s" style="${plain}">No prices; held at cost.</div>` : ''}</div>`;
+}
+
+// ---------- The paper's own record ----------
+// What the Market Page printed, scored. Kept apart from what you bought.
+const RECORD = [
+  { key: 'index', name: 'The Index', color: '#1B1712', w: 2.4 },
+  { key: 'sector', name: 'The Sector', color: '#B8923F', w: 2 },
+  { key: 'name', name: 'The Name', color: '#22335E', w: 2 },
+];
+const MATTRESS = { key: 'mattress', name: 'The Mattress', color: '#A69C8C', w: 1.6, dash: true };
+const RUNG_WORD = { index: 'the index', sector: 'the sector', name: 'the name' };
+
+function recordSection(h, v) {
+  const head = (since) => `<div class="lbl-row"><span class="lbl">The Market Page · its own record</span>${since ? `<span class="rec-since">Since ${ap(since)}</span>` : ''}</div>`;
+  if (!h) return '';
+  const r = h.record;
+  if (!r || !r.editions) {
+    return `<div class="record">${head()}<p class="body13" style="margin-top:10px">The paper keeps score on its own picks, $20 a rung at the day's close, from its first edition. It has not printed one yet.</p></div>`;
+  }
+  const rows = [...RECORD.map((x) => ({ ...x, ...r.rungs[x.key] })), { ...MATTRESS, ...r.mattress }]
+    .map(
+      (x) => `<span class="rn"><i class="lk${x.dash ? ' dash' : ''}" style="border-color:${x.color}"></i>${x.name}</span>
+        <span class="r ret" style="color:${x.key === 'mattress' ? '#1B1712' : gainColor(x.pct)}">${pct(x.pct)}</span>
+        <span class="r">${x.picks}</span><span class="r">${whole(x.in_cents)}</span><span class="r">${x.picks ? fmt(x.now_cents) : '–'}</span>`,
+    )
+    .join('');
+  const move = (x) => (Math.round(x * 10000) === 0 ? 'flat' : `${x > 0 ? 'up' : 'down'} ${pct(Math.abs(x)).replace('+', '')}`);
+  const pick = (b) => `${esc(b.symbol)}, ${RUNG_WORD[b.rung]} on ${ap(b.day)}, ${move(b.pct)}`;
+  const deck = `<p class="rec-deck">Every Market Page prints three rungs. This is $20 in each, at the close of the day it ran, against the same $20 kept in the bank. The paper's picks, not your trades.</p>`;
+  if (!r.mattress.picks) {
+    return `<div class="record">${head(r.since)}${deck}<p class="bw" style="margin:0">The first picks await a closing price.</p></div>`;
+  }
+  return `<div class="record">
+    ${head(r.since)}
+    ${deck}
+    <div class="lower" style="grid-template-columns:${v.ledgerCols};gap:18px ${v.colGap}">
+      <div class="figbox">
+        <div class="t">Fig. 2 · Return on the paper's picks, by rung</div>
+        <div class="chart" id="rchart"></div>
+        <div class="rkey">${[...RECORD, MATTRESS].map((x) => `<span><i class="lk${x.dash ? ' dash' : ''}" style="border-color:${x.color}"></i>${x.name}</span>`).join('')}</div>
+      </div>
+      <div>
+        <div class="lbl">Box score${r.as_of ? ` · at the ${ap(r.as_of)} close` : ''}</div>
+        <div class="box">
+          <span class="h">Rung</span><span class="h r">Return</span><span class="h r">Picks</span><span class="h r">In</span><span class="h r">Now</span>
+          ${rows}
+        </div>
+        ${r.best ? `<p class="bw">Best pick: ${pick(r.best)}.${r.worst ? ` Worst: ${pick(r.worst)}.` : ''}</p>` : ''}
+        ${r.pending ? `<p class="bw">${r.pending === 1 ? 'The latest edition’s three await' : `The last ${numberWord(r.pending)} editions await`} a closing price.</p>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function drawRecordChart(box) {
+  const r = S.history?.record;
+  if (!r || !r.days.length || !r.mattress.picks) return;
+  const days = r.days;
+  const n = days.length;
+  const last = n - 1;
+  const W = Math.max(300, box.clientWidth);
+  const H = V().wide ? 240 : 200;
+  const m = { l: 56, r: 12, t: 14, b: 22 };
+  const series = [...RECORD.map((x) => ({ ...x, vals: days.map((d) => d[x.key]) })), { ...MATTRESS, vals: days.map(() => 0) }];
+  const all = series.flatMap((x) => x.vals).filter((x) => x != null);
+  let lo = Math.min(0, ...all);
+  let hi = Math.max(0, ...all);
+  // At least a percentage point of range, so a quiet week reads as quiet.
+  if (hi - lo < 0.01) {
+    const mid = (hi + lo) / 2;
+    lo = mid - 0.005;
+    hi = mid + 0.005;
+  }
+  const nice = (span) => {
+    const raw = span / 4;
+    const mag = 10 ** Math.floor(Math.log10(raw));
+    const q = raw / mag;
+    return (q <= 1 ? 1 : q <= 2 ? 2 : q <= 2.5 ? 2.5 : q <= 5 ? 5 : 10) * mag;
+  };
+  const step = nice(hi - lo);
+  lo = Math.floor(lo / step + 1e-9) * step;
+  hi = Math.ceil(hi / step - 1e-9) * step;
+  const dp = step * 100 >= 1 ? 0 : step * 100 >= 0.1 ? 1 : 2;
+  const x = (i) => m.l + (n === 1 ? (W - m.l - m.r) / 2 : (i / (n - 1)) * (W - m.l - m.r));
+  const y = (val) => m.t + ((hi - val) / (hi - lo)) * (H - m.t - m.b);
+  const grid = [];
+  for (let val = lo; val <= hi + step / 1e6; val += step) grid.push(Math.abs(val) < step / 1e6 ? 0 : val);
+  // Skips days before a rung's first priced pick.
+  const line = (arr) => {
+    let out = '';
+    let pen = false;
+    arr.forEach((val, i) => {
+      if (val == null) return (pen = false);
+      out += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(val).toFixed(1)}`;
+      pen = true;
+    });
+    return out;
+  };
+  const xi = n === 1 ? [0] : [...new Set([0, Math.floor(last / 2), last])];
+  const today = S.state.today;
+  const dayName = (i) => (days[i].day === today ? 'TODAY' : ap(days[i].day).toUpperCase());
+  const lastOf = (x) => x.vals[last];
+  const drawn = [...series].reverse(); // the index on top
+
+  box.innerHTML = `
+    ${grid.map((val) => `<span class="yl" style="top:${(y(val) - 5).toFixed(1)}px">${val === 0 ? '0%' : pct(val, dp)}</span>`).join('')}
+    ${xi.map((i) => `<span class="xl" style="left:${x(i).toFixed(1)}px;transform:${n === 1 ? 'translateX(-50%)' : i === 0 ? 'none' : i === last ? 'translateX(-100%)' : 'translateX(-50%)'}">${dayName(i)}</span>`).join('')}
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" tabindex="0" aria-label="Return on the paper's picks by rung since ${ap(days[0].day)}. ${series.map((s) => `${s.name} ${pct(lastOf(s))}`).join(', ')}. Use arrow keys to read each day.">
+      ${grid.map((val) => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(val).toFixed(1)}" y2="${y(val).toFixed(1)}" stroke="#D6C8A6" stroke-width="1"/>`).join('')}
+      ${drawn.map((s) => `<path d="${line(s.vals)}" fill="none" stroke="${s.color}" stroke-width="${s.w}"${s.dash ? ' stroke-dasharray="4 4"' : ''} stroke-linejoin="round"/>`).join('')}
+      ${drawn.filter((s) => lastOf(s) != null).map((s) => `<circle cx="${x(last).toFixed(1)}" cy="${y(lastOf(s)).toFixed(1)}" r="${s.dash ? 3 : 4}" fill="${s.color}"/>`).join('')}
+      <g class="cross" display="none">
+        <line class="cl" y1="${m.t}" y2="${H - m.b}" stroke="#5E554A" stroke-width="1"/>
+        ${drawn.map((s) => `<circle class="c-${s.key}" r="4" fill="${s.color}" stroke="#EFE4CB" stroke-width="2"/>`).join('')}
+      </g>
+      <rect class="hit" x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}"/>
+    </svg>
+    <div class="tip" hidden></div>`;
+  wireChart(box, { n, W, x, label: (i) => (days[i].day === today ? 'Today' : `${wd3(days[i].day)}. ${ap(days[i].day)}`), points: (i) => series.map((s) => ({ sel: `.c-${s.key}`, y: s.vals[i] == null ? null : y(s.vals[i]) })), rows: (i) => series.map((s) => ({ label: s.name, value: pct(s.vals[i]), color: s.color, dash: s.dash })), m });
+}
+
+// Crosshair, tooltip, and arrow keys for a day-by-day chart.
+function wireChart(box, { n, W, x, m, label, points, rows }) {
+  const last = n - 1;
+  const svg = box.querySelector('svg');
+  const cross = svg.querySelector('.cross');
+  const tip = box.querySelector('.tip');
+  let idx = last;
+  function show(i) {
+    idx = Math.max(0, Math.min(last, i));
+    const cx = x(idx);
+    cross.setAttribute('display', 'inline');
+    const cl = cross.querySelector('.cl');
+    cl.setAttribute('x1', cx);
+    cl.setAttribute('x2', cx);
+    for (const p of points(idx)) {
+      const c = cross.querySelector(p.sel);
+      c.setAttribute('display', p.y == null ? 'none' : 'inline');
+      if (p.y != null) {
+        c.setAttribute('cx', cx);
+        c.setAttribute('cy', p.y);
+      }
+    }
+    tip.replaceChildren();
+    const head = document.createElement('div');
+    head.className = 'h';
+    head.textContent = label(idx);
+    tip.append(head);
+    for (const r of rows(idx)) {
+      const row = document.createElement('div');
+      row.className = 'r';
+      const key = document.createElement('i');
+      key.className = `lk${r.dash ? ' dash' : ''}`;
+      key.style.borderColor = r.color;
+      const b = document.createElement('b');
+      b.textContent = r.value;
+      const name = document.createElement('span');
+      name.textContent = r.label;
+      row.append(key, b, name);
+      tip.append(row);
+    }
+    tip.hidden = false;
+    const tw = tip.offsetWidth;
+    const left = cx + 12 + tw <= W ? cx + 12 : cx - 12 - tw;
+    tip.style.left = `${Math.max(0, left)}px`;
+  }
+  function hide() {
+    cross.setAttribute('display', 'none');
+    tip.hidden = true;
+  }
+  const pick = (e) => {
+    const rect = svg.getBoundingClientRect();
+    return n === 1 ? 0 : Math.round(((e.clientX - rect.left - m.l) / (W - m.l - m.r)) * last);
+  };
+  svg.addEventListener('pointermove', (e) => show(pick(e)));
+  svg.addEventListener('pointerdown', (e) => show(pick(e)));
+  svg.addEventListener('pointerleave', hide);
+  svg.addEventListener('focus', () => show(idx));
+  svg.addEventListener('blur', hide);
+  svg.addEventListener('keydown', (e) => {
+    const k = { ArrowLeft: idx - 1, ArrowRight: idx + 1, Home: 0, End: last }[e.key];
+    if (k === undefined) return;
+    e.preventDefault();
+    show(k);
+  });
 }
 
 function drawChart(box) {

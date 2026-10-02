@@ -28,9 +28,17 @@ unused and kept only for reference.
   stock or ETF. The bank pays immediately and the order waits 24 hours before it goes
   to Alpaca. Cancel any time before then for a full refund. Positions cannot be sold
   for 7 days after the first fill; a sale sells the whole position and returns the
-  proceeds to the bank.
+  proceeds to the bank. Each position shows its gain against keeping that money in
+  the bank, in percent and dollars, and how long it has been held.
 - **Ledgers.** Burned, yours, and could-have-been, charted daily since the quit
-  date, with daily values and trade history.
+  date, with daily values and trade history. A fourth figure, **trading, net**, is
+  what trading has added or cost against leaving every dollar in the bank: gains on
+  what is held plus gains booked by sells.
+- **The paper's own record.** At the foot of Ledgers, the Market Page keeps score on
+  itself: $20 into each printed rung at the close of the day it ran, as three paper
+  portfolios against a fourth, the mattress, which is the same $20 kept in the bank.
+  A box score and a chart of each rung's return. These are the paper's picks, not
+  your trades.
 - **Settings.** Quit date, pack price, timezone, ghost benchmark, tiers, and the
   guardrails. Cooldown and hold can go up but never below 24 hours and 7 days. The $20
   to $200 range is fixed in code and in the database.

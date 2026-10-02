@@ -23,6 +23,15 @@ page. Everything in "Done" is final unless it turns out to be impossible; note w
 | Storage | `editions` table (migration applied to CIGGYBANK), `getEdition` / `putEdition` / `listEditions` on both stores | One row per day: `content`, the `universe` in force, `model`, `generated_at`, `spiked`. |
 | Tests | `test/edition.test.js` | Every rule above. |
 
+## Also built: the paper's own record
+
+`lib/record.js` scores every stored edition: $20 into each rung at the close of the
+first session on or after its day, against the mattress. It rides on
+`history().record` and shows at the foot of Ledgers. It needs nothing from the job
+below except editions in the `editions` table; until the job runs, production shows
+an empty record. See "Trading against saving, and the paper's record" in
+`DECISIONS.md`.
+
 ## To build (Opus)
 
 ### 1. Market data: `broker.getNews()` and a bars helper

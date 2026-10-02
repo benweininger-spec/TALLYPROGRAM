@@ -138,3 +138,44 @@ at each smoked day's close, paper theme only. These are the calls it left open.
   also dashed, every series has a legend key, and the daily table carries every value.
 - **Broker line in Settings** has three variants: paper (the design's copy), live
   ("Real money, real feelings."), and no keys ("No keys, no feelings.").
+
+## Trading against saving, and the paper's record
+
+- **The mattress is the bank.** The bank earns nothing, so a position's gain on its
+  cost is exactly its upside over straight saving. No interest rate is assumed.
+- **Cost is what the bank paid**, not shares × average fill price: the buy's debit
+  less any refund, from the ledger. A position's cost and its gain therefore add up
+  to the cent with the trading figure, and a $20 buy shows a $20.00 cost.
+- **Trading, net = held gains + booked gains.** Booked gains come from replaying
+  fills in order, with a sell taking its share of the cost of what was held.
+  Queued, cancelled, and rejected buys count for nothing. Without prices, positions
+  sit at cost and add nothing. Its percentage is on everything ever bought, so money
+  recycled through a sale and a rebuy counts twice; simple, and slightly modest.
+- **The trading tile leads with dollars**, like the three figures beside it. The
+  percentage is right under it. Positions and the paper's record lead with
+  percentages, because at $20 a pick the dollars are cents for months.
+- **A printed rung buys at the close of the first session on or after its edition
+  day.** The edition goes out before the open, so that close is a price the paper had
+  not seen. A weekend or holiday edition waits for the next session. The price cache
+  stores a close for every calendar day, so a session is a day whose close differs
+  from the day before; two sessions closing at the identical price read as one, and
+  the lot then prices a session later, never earlier.
+- **A pick is scored once its close is in.** Until then it is listed as awaiting a
+  close and kept out of the box score, so the percentage does not dip every morning
+  when a new $20 joins at cost. The mattress counts the same editions.
+- **Values are at the last close**, not the live price: one cached close per ticker
+  instead of up to 26 live quotes on every Ledgers load.
+- **Spiked editions count.** The fallback rungs were printed, and a reader could have
+  bought them. The record is what the paper printed, not what it meant to print.
+- **The record never reads positions, trades, or the ledger**, so what the paper
+  printed and what you bought cannot mix.
+- **Splits re-base the cache.** Bars are split-adjusted when fetched, so a close
+  cached before a split no longer matches. When the overlap fetched with each top-up
+  disagrees with the cache by more than 2%, the whole range for that ticker is
+  fetched again. Bars are split-adjusted only, so dividends never trip it. Ghost lots
+  store their shares when priced and are not repriced after a split. The benchmark
+  is a broad ETF that rarely splits, so that stays a known gap.
+- **The demo prints two weeks of weekday editions**, the sample's words with rungs
+  rotated through the universe, and adds a sale at a small gain and a holding at a
+  small loss. The fake broker now lists the whole default universe, and its closes
+  depend only on the date, so a close is the same whenever it is fetched.
